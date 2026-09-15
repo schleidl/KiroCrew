@@ -1301,6 +1301,14 @@ export interface SubagentActivity {
    *  uses it to fetch this node's own context-trace so each node shows the
    *  composition of ITS window, not the parent's. Absent for native cards. */
   childSession?: string
+  /** WHERE this run executes, when that is not this machine — the backend's
+   *  `executor`, carried on the `subagent_spawn` frame and the snapshot.
+   *  `'agentcore'` means a Bedrock AgentCore microVM in the operator's own AWS
+   *  account; absent means local, which is every run on a build without the
+   *  extra. Named `remoteExecutor` rather than `executor` deliberately: a SLOT's
+   *  `executor === 'remote'` already exists and means a session bound to a peer
+   *  gateway in Crew Mode, which is a different axis entirely. */
+  remoteExecutor?: string
   status: 'pending' | 'running' | 'tool' | 'done' | 'error' | 'stopped'
   streaming: string; lastTool: string
   startedAt: number; elapsed: number; error?: string

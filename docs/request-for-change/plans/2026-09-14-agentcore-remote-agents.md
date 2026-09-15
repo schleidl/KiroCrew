@@ -209,15 +209,15 @@ Branch `feat/agentcore-spawn`.
 
 Branch `feat/agentcore-ui`.
 
-- [ ] **Step 1: Backend fields.** Executor kind, region and credits on the spawn
+- [x] **Step 1: Backend fields.** Executor kind, region and credits on the spawn
   and snapshot frames and the slot projection; a usage frame added to the event
   scope allowlist.
-- [ ] **Step 2: Frontend.** One reducer case; a badge and a credit read-out in the
+- [x] **Step 2: Frontend.** One reducer case; a badge and a credit read-out in the
   run card and the agents panel; a composer toggle gated on the scope; every
   string through the catalog.
-- [ ] **Step 3: Evidence.** A browser test that renders the badge from a replayed
+- [x] **Step 3: Evidence.** A browser test that renders the badge from a replayed
   snapshot, plus a screenshot in the pull request.
-- [ ] **Step 4: Gates.** Frontend build, tests, catalog check, feature map.
+- [x] **Step 4: Gates.** Frontend build, tests, catalog check, feature map.
 
 ## WP6: delivery and durability
 

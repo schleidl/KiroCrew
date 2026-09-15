@@ -9598,7 +9598,8 @@
         "artifacts_load_failed": "Impossible de charger les artefacts de cette session",
         "library_load_failed": "Impossible de charger la bibliothèque d’artefacts",
         "artifact_save_failed": "Impossible d’enregistrer l’artefact",
-        "workflow_runs_load_failed": "Impossible de charger les exécutions de workflow"
+        "workflow_runs_load_failed": "Impossible de charger les exécutions de workflow",
+        "executor_label": "S'exécute à distance sur {{executor}}"
       },
       "assistantMessage": {
         "applied_to_tasks": "Appliqué aux tâches",

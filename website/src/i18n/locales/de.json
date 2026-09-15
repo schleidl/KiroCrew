@@ -9466,7 +9466,8 @@
         "artifacts_load_failed": "Artefakte dieser Sitzung konnten nicht geladen werden",
         "library_load_failed": "Artefaktbibliothek konnte nicht geladen werden",
         "artifact_save_failed": "Artefakt konnte nicht gespeichert werden",
-        "workflow_runs_load_failed": "Workflow-Ausführungen konnten nicht geladen werden"
+        "workflow_runs_load_failed": "Workflow-Ausführungen konnten nicht geladen werden",
+        "executor_label": "Läuft remote auf {{executor}}"
       },
       "assistantMessage": {
         "applied_to_tasks": "Auf Aufgaben angewendet",

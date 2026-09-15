@@ -9466,7 +9466,8 @@
         "artifacts_load_failed": "इस सत्र के आर्टिफ़ैक्ट लोड नहीं हो सके",
         "library_load_failed": "आर्टिफ़ैक्ट लाइब्रेरी लोड नहीं हो सकी",
         "artifact_save_failed": "आर्टिफ़ैक्ट सहेजा नहीं जा सका",
-        "workflow_runs_load_failed": "वर्कफ़्लो रन लोड नहीं हो सके"
+        "workflow_runs_load_failed": "वर्कफ़्लो रन लोड नहीं हो सके",
+        "executor_label": "{{executor}} पर दूरस्थ रूप से चलता है"
       },
       "assistantMessage": {
         "applied_to_tasks": "कार्यों पर लागू",

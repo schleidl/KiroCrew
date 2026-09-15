@@ -4778,7 +4778,7 @@ const chatSlice = createSlice({
         if (b) { b.approving = action.payload.approving; return }
       }
     },
-    sseSubagentSpawn(state, action: PayloadAction<{ slot: string; id: string; task: string; agent: string; model?: string; requested_model?: string; child_session?: string }>) {
+    sseSubagentSpawn(state, action: PayloadAction<{ slot: string; id: string; task: string; agent: string; model?: string; requested_model?: string; child_session?: string; executor?: string }>) {
       if (isUnsafeKey(action.payload.slot) || isUnsafeKey(action.payload.id)) return
       const subs = action.payload.slot !== state.activeSlot
         ? (state.slotActivity[safeKey(action.payload.slot)] ??= { toolLog: [], subagents: {} }).subagents
@@ -4793,6 +4793,15 @@ const chatSlice = createSlice({
         // Same guard for requestedModel: only set when the frame carries a value.
         if (action.payload.requested_model) existing.requestedModel = action.payload.requested_model
         if (action.payload.child_session) existing.childSession = action.payload.child_session
+        // Same one-way guard as the model fields: a later frame that omits the
+        // executor must not silently turn a remote run into a local-looking one.
+        //
+        // `remoteExecutor`, NOT `executor`: a slot's `executor === 'remote'` already
+        // exists in this file and means something else entirely — a session bound to a
+        // peer gateway in Crew Mode. Two meanings for one word in one slice is how a
+        // reader ends up wiring a badge to the wrong axis, so the wire field keeps the
+        // backend's name and the store field says which axis it is.
+        if (action.payload.executor) existing.remoteExecutor = action.payload.executor
         // The spawn event carries the authoritative task text (the pending
         // card's task is derived from the approval title, which may be empty
         // or just "spawn_run") — always prefer the spawn payload's task.
@@ -4804,6 +4813,7 @@ const chatSlice = createSlice({
         model: action.payload.model || '',
         requestedModel: action.payload.requested_model || existing?.requestedModel || undefined,
         childSession: action.payload.child_session || undefined,
+        remoteExecutor: action.payload.executor || existing?.remoteExecutor || undefined,
         status: 'running', streaming: existing?.streaming || '', lastTool: '', startedAt: existing?.startedAt || Date.now(), elapsed: 0,
         toolCount: 0, stalled: false,
       }
@@ -5205,7 +5215,7 @@ const chatSlice = createSlice({
       if (idx >= 0) side.messages.splice(idx, 1)
       side.pending = false
     },
-    sseSubagentSnapshot(state, action: PayloadAction<{ id: string; slot: string; task: string; agent: string; model?: string; requested_model?: string; child_session?: string; streaming: string; last_tool: string; started: number; tool_count?: number; stalled?: boolean; idle_secs?: number }>) {
+    sseSubagentSnapshot(state, action: PayloadAction<{ id: string; slot: string; task: string; agent: string; model?: string; requested_model?: string; child_session?: string; executor?: string; streaming: string; last_tool: string; started: number; tool_count?: number; stalled?: boolean; idle_secs?: number }>) {
       const d = action.payload
       // A snapshot without an owning slot is an orphan, not evidence that it
       // belongs to whichever chat this browser happens to show. Popout windows
@@ -5230,6 +5240,7 @@ const chatSlice = createSlice({
         // Same guard for requestedModel: prefer frame value, fall back to existing.
         requestedModel: d.requested_model || existing?.requestedModel || undefined,
         childSession: d.child_session || existing?.childSession || undefined,
+        remoteExecutor: d.executor || existing?.remoteExecutor || undefined,
         status: d.last_tool ? 'tool' : 'running', streaming: d.streaming, lastTool: d.last_tool,
         startedAt: d.started * 1000, elapsed: 0,
         toolCount: d.tool_count ?? 0, stalled,

@@ -3667,7 +3667,8 @@
         "artifacts_load_failed": "Couldn't load this session's artifacts",
         "library_load_failed": "Couldn't load the artifact library",
         "artifact_save_failed": "Couldn't save the artifact",
-        "workflow_runs_load_failed": "Couldn't load the workflow runs"
+        "workflow_runs_load_failed": "Couldn't load the workflow runs",
+        "executor_label": "Runs remotely on {{executor}}"
       },
       "assistantMessage": {
         "speak_message": "Read message aloud",

@@ -9334,7 +9334,8 @@
         "artifacts_load_failed": "このセッションのアーティファクトを読み込めませんでした",
         "library_load_failed": "アーティファクトライブラリを読み込めませんでした",
         "artifact_save_failed": "アーティファクトを保存できませんでした",
-        "workflow_runs_load_failed": "ワークフロー実行を読み込めませんでした"
+        "workflow_runs_load_failed": "ワークフロー実行を読み込めませんでした",
+        "executor_label": "{{executor}} でリモート実行"
       },
       "assistantMessage": {
         "applied_to_tasks": "タスクに適用済み",

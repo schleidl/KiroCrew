@@ -9466,7 +9466,8 @@
         "artifacts_load_failed": "এই সেশনের আর্টিফ্যাক্ট লোড করা যায়নি",
         "library_load_failed": "আর্টিফ্যাক্ট লাইব্রেরি লোড করা যায়নি",
         "artifact_save_failed": "আর্টিফ্যাক্ট সংরক্ষণ করা যায়নি",
-        "workflow_runs_load_failed": "ওয়ার্কফ্লো রান লোড করা যায়নি"
+        "workflow_runs_load_failed": "ওয়ার্কফ্লো রান লোড করা যায়নি",
+        "executor_label": "{{executor}}-এ রিমোটে চলে"
       },
       "assistantMessage": {
         "applied_to_tasks": "টাস্কে প্রয়োগ করা হয়েছে",

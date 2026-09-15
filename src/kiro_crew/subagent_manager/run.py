@@ -1069,6 +1069,15 @@ class RunEventCoordinator(ManagerComponent):
                 # The sub-agent's own session key (see build_subagent_snapshot):
                 # lets a client fetch this node's own context-trace.
                 "child_session": info.conversation_key or f"subagent:{info.id}",
+                # WHERE this run executes. Empty for every local run, so a client that
+                # does not know about remote execution renders exactly what it did
+                # before. Sent on the SPAWN frame rather than derived later because a
+                # remote run must be identifiable from its first frame -- the badge
+                # exists so nobody has to wonder whether a container is being paid for,
+                # and a field that arrived only on completion would answer too late.
+                # Not a free-text field: it is one of a closed set the route validated,
+                # so it needs no redaction.
+                **({"executor": info.executor} if info.executor else {}),
             },
         )
         # Stream results to disk for orchestrated chat.

@@ -250,6 +250,13 @@ def build_subagent_snapshot(a: Any, *, now: float | None = None) -> dict:
     }
     if a.stalled:
         data["idle_secs"] = max(0, int(ts - a.last_activity))
+    # Present only for a remote run, so a client that predates remote execution sees the
+    # snapshot it always saw. On the SNAPSHOT as well as the spawn frame because a client
+    # that reconnects mid-run gets only this -- and a badge that vanished on reconnect
+    # would say the container had stopped being paid for.
+    _executor = getattr(a, "executor", "") or ""
+    if _executor:
+        data["executor"] = _executor
     data["started"] = a.started
     return data
 

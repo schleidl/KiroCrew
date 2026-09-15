@@ -611,6 +611,55 @@ import {
   sseSubagentDone,
 } from './chatSlice'
 
+describe('sseSubagentSpawn — remote executor threading (agentcore)', () => {
+  function makeStore() {
+    return configureStore({
+      reducer: { chat: chatReducer },
+      middleware: (getDefault) => getDefault({ serializableCheck: false, immutableCheck: false }),
+    })
+  }
+
+  it('threads the executor from the spawn frame onto the row', () => {
+    const store = makeStore()
+    store.dispatch(setActiveSlot('active'))
+    store.dispatch(sseSubagentSpawn({
+      slot: 'active', id: 'sa1', task: 't', agent: 'a', executor: 'agentcore',
+    }))
+    expect(store.getState().chat.subagents['sa1'].remoteExecutor).toBe('agentcore')
+  })
+
+  it('leaves it undefined for a local run', () => {
+    const store = makeStore()
+    store.dispatch(setActiveSlot('active'))
+    store.dispatch(sseSubagentSpawn({ slot: 'active', id: 'sa1', task: 't', agent: 'a' }))
+    expect(store.getState().chat.subagents['sa1'].remoteExecutor).toBeUndefined()
+  })
+
+  it('survives a REPLAYED snapshot, which is all a reconnecting client gets', () => {
+    const store = makeStore()
+    store.dispatch(setActiveSlot('active'))
+    store.dispatch(sseSubagentSnapshot({
+      id: 'sa1', slot: 'active', task: 't', agent: 'a', executor: 'agentcore',
+      streaming: '', last_tool: '', started: Date.now() / 1000,
+    }))
+    expect(store.getState().chat.subagents['sa1'].remoteExecutor).toBe('agentcore')
+  })
+
+  it('a later frame that omits it does not turn a remote run local', () => {
+    const store = makeStore()
+    store.dispatch(setActiveSlot('active'))
+    store.dispatch(sseSubagentPending({ slot: 'active', id: 'sa1', task: 't', agent: 'a' }))
+    store.dispatch(sseSubagentSpawn({
+      slot: 'active', id: 'sa1', task: 't', agent: 'a', executor: 'agentcore',
+    }))
+    store.dispatch(sseSubagentSnapshot({
+      id: 'sa1', slot: 'active', task: 't', agent: 'a',
+      streaming: '', last_tool: '', started: Date.now() / 1000,
+    }))
+    expect(store.getState().chat.subagents['sa1'].remoteExecutor).toBe('agentcore')
+  })
+})
+
 describe('sseSubagentSpawn — requestedModel threading (#5326)', () => {
   function makeSpawnStore() {
     return configureStore({

@@ -9598,7 +9598,8 @@
         "artifacts_load_failed": "Impossibile caricare gli artefatti di questa sessione",
         "library_load_failed": "Impossibile caricare la libreria degli artefatti",
         "artifact_save_failed": "Impossibile salvare l’artefatto",
-        "workflow_runs_load_failed": "Impossibile caricare le esecuzioni di workflow"
+        "workflow_runs_load_failed": "Impossibile caricare le esecuzioni di workflow",
+        "executor_label": "Viene eseguito in remoto su {{executor}}"
       },
       "assistantMessage": {
         "applied_to_tasks": "Applicato alle attività",
