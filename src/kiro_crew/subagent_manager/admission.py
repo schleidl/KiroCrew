@@ -519,7 +519,6 @@ class SpawnAdmissionCoordinator(ManagerComponent):
         #    answer "run this on a remote executor" by running it on the operator's
         #    own machine -- the exact opposite of what was asked, and a worse blast
         #    radius than the request carried.
-        from kiro_crew.subagent_manager.admission import EXECUTOR_LOCAL as _EXECUTOR_LOCAL
         from kiro_crew.subagent_manager.admission import (
             _vet_remote_exec_governance,
         )
@@ -564,50 +563,16 @@ class SpawnAdmissionCoordinator(ManagerComponent):
         now = time.monotonic()
         should_queue, slot_free = self._manager._should_stagger_queue(now)
         if should_queue:
-            # A remote member must not WAIT here. The queue round-trip re-enters
-            # through the facade's ``spawn(**params)``, whose signature carries no
-            # ``executor`` -- so a queued remote spawn would drain as a LOCAL one,
-            # which is the silent downgrade the gate above exists to prevent, arriving
-            # by a different door. Refuse instead, the way a prevalidated app spawn is
-            # refused rather than queued with a stale ownership check. WP4, which owns
-            # the facade signature, replaces this with real queue carriage.
-            if executor != _EXECUTOR_LOCAL:
-                logger.warning(
-                    "Rejecting remote spawn that would queue (executor=%s): "
-                    "the queue round-trip cannot carry the executor",
-                    executor,
-                )
-                from kiro_crew.platform.context import redact_log_via_context
-
-                _queue_task_note = redact_log_via_context(_redacted_task)[:120]
-                sel().log_tool_invocation(
-                    session_key=parent_session_key or "",
-                    source="subagent",
-                    tool_name="spawn_run",
-                    outcome="denied",
-                    error="remote spawn would queue",
-                    metadata={
-                        "executor": executor,
-                        "scope": "capabilities.remote_exec",
-                        "task": _queue_task_note,
-                    },
-                )
-                return self._manager._announce_rejection(
-                    SubagentInfo(
-                        id=agent_id,
-                        task=_redacted_task,
-                        agent=agent,
-                        parent_session_key=parent_session_key,
-                        done=True,
-                        error=(
-                            "spawn refused: the spawn queue is at capacity and a remote "
-                            "spawn is not queued, because draining it would silently run "
-                            "the work locally — retry when a slot is free"
-                        ),
-                        batch_id=batch_id,
-                        batch_total=max(0, int(batch_total)),
-                    )
-                )
+            # A remote spawn queues like any other now. WP2 REFUSED one here, because
+            # the drain re-enters through a facade whose signature could not express an
+            # executor, so a queued remote spawn would have drained as a LOCAL one --
+            # the silent downgrade the governance gate above exists to prevent, arriving
+            # by a different door. WP4 gave the facade a keyword-only ``executor`` and
+            # the queue dict below an ``executor`` entry, so the round-trip carries it;
+            # ``test_agentcore_spawn.py::test_a_queued_remote_spawn_drains_remote``
+            # pins that, and it is the test that must fail if any of the three parts is
+            # removed rather than a comment saying so.
+            #
             # A prevalidated app spawn must NOT sit in the queue. _agent_prevalidated
             # skips the agent-directory ownership scan on drain (it was validated
             # off the loop at request time); if it waited in the queue, the app
@@ -672,6 +637,15 @@ class SpawnAdmissionCoordinator(ManagerComponent):
                     "include_memory": include_memory,
                     "include_lessons": include_lessons,
                     "include_project": include_project,
+                    # The executor rides the queue for the same reason the context
+                    # triple does, but the failure it prevents is worse than a regained
+                    # scope: a drain that dropped it would re-enter the facade with the
+                    # default LOCAL executor and run a remote delegation's untrusted
+                    # code on the operator's machine, with nothing red to say so. This
+                    # entry, the facade's keyword-only parameter and the drain's
+                    # ``spawn(**params)`` are one mechanism -- remove any of the three
+                    # and the silent downgrade is back.
+                    "executor": executor,
                     # Queued alongside the context triple, and for the same
                     # reason: the drain re-enters `spawn` from this dict alone, so
                     # a field missing here is a scope the run silently regains.

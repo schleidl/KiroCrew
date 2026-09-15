@@ -281,6 +281,26 @@ def schemas() -> list[dict[str, Any]]:
                             "is still paid."
                         ),
                     },
+                    "executor": {
+                        "type": "string",
+                        "description": (
+                            "Where the subagent RUNS. Omit for the default: on this "
+                            "machine, in the gateway's own sandbox. Set 'agentcore' to "
+                            "run it inside a Bedrock AgentCore microVM in the "
+                            "operator's own AWS account instead — the agent gets its "
+                            "own kernel, its own uid and no access to this filesystem, "
+                            "which is what makes it the right choice for untrusted "
+                            "repository code. It is NOT a speed or capacity option: a "
+                            "remote session costs a container start and is billed to "
+                            "the operator's account, and it is refused unless the "
+                            "operator both installed the extra and granted the "
+                            "capabilities.remote_exec scope, so treat a refusal as an "
+                            "answer about their configuration rather than something to "
+                            "retry locally. A remote session is also SINGLE-TURN: "
+                            "spawn_continue cannot resume one, so a follow-up needs a "
+                            "new spawn seeded with a summary."
+                        ),
+                    },
                     "keep": {
                         "type": "boolean",
                         "description": (
@@ -574,6 +594,10 @@ def spawn_run(name: str, args: dict[str, Any]) -> str:
     cwd = args.get("cwd") or ""
     model = args.get("model") or ""
     reasoning_effort = args.get("reasoning_effort") or ""
+    # Batch-wide like model and effort: a wave is one delegation decision, and a
+    # per-task executor would let half a fan-out run on the operator's machine while
+    # the other half ran remotely, which is not a shape any caller asked for.
+    executor = str(args.get("executor") or "").strip()
     keep = bool(args.get("keep"))
     # Context scope: absent ⇒ true, so a parent that passes nothing gets the
     # same context a normal session would.
@@ -664,6 +688,8 @@ def spawn_run(name: str, args: dict[str, Any]) -> str:
             body["model"] = model
         if reasoning_effort:
             body["reasoning_effort"] = reasoning_effort
+        if executor:
+            body["executor"] = executor
         if keep:
             body["keep"] = True
         if not inc_memory:

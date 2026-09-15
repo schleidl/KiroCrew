@@ -289,10 +289,18 @@ class TestSpawnAdmissionEnforcesIt:
         assert info is not None
         assert info.error == "spawn rejected: no approval mechanism configured"
 
-    def test_a_remote_spawn_that_would_queue_is_refused_not_downgraded(self) -> None:
-        """The queue round-trip re-enters through the facade, which carries no
-        ``executor`` — so draining a queued remote member would run it locally.
-        Refused instead, the way a prevalidated app spawn is."""
+    def test_a_remote_spawn_that_would_queue_carries_its_executor(self) -> None:
+        """WP2 REFUSED this; WP4 carries it, and the carriage is what is pinned.
+
+        The refusal was never the desired behaviour -- it stood in for a facade that
+        could not express an executor. The stagger queue stores a spawn's arguments in a
+        dict and the drain re-enters ``SubagentManager.spawn(**params)`` from that dict
+        alone, so an executor missing from it drains as a LOCAL run: a remote
+        delegation's untrusted repository code executing on the operator's own machine,
+        with nothing red to say so. Three parts carry it now -- the facade's keyword-only
+        parameter, this dict entry, and the drain's existing ``**params`` call -- and
+        deleting any one of them fails here.
+        """
         _install(_policy(remote_exec={"enabled": True}))
         manager = _mgr()
         manager._running_count = manager._max_concurrent  # at capacity → queue
@@ -300,6 +308,9 @@ class TestSpawnAdmissionEnforcesIt:
         info, _audit = _spawn(manager, executor=adm.EXECUTOR_AGENTCORE)
 
         assert info is not None
-        assert info.done is True
-        assert "not queued" in info.error
-        assert manager._queue == [], "a remote member must not sit in the queue"
+        assert info.done is False, "a remote member queues like any other now"
+        assert len(manager._queue) == 1, "and it does sit in the queue"
+        assert manager._queue[0]["executor"] == adm.EXECUTOR_AGENTCORE, (
+            "the queued params are the drain's only input; without this entry the "
+            "drain would silently run the work locally"
+        )

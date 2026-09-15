@@ -2327,7 +2327,16 @@ class SubagentManager:
         _from_queue: bool = False,
         _preassigned_id: str = "",
         _memory_mode: str | None = None,
+        *,
+        executor: str = "",
     ) -> SubagentInfo | None:
+        # Keyword-only, and named here rather than absorbed by a kwargs sink, because
+        # this facade is what the STAGGER QUEUE re-enters through: a drain calls
+        # ``spawn(**params)`` from the dict it stored, so an executor the signature
+        # cannot express is an executor the drain silently drops -- and dropping it
+        # means running a remote delegation's untrusted code on the operator's own
+        # machine. WP2 refused a remote spawn that would queue for exactly this
+        # reason; carrying it here is what let that refusal go.
         return self._admission.spawn_impl(
             task,
             parent_session_key,
@@ -2353,6 +2362,7 @@ class SubagentManager:
             _from_queue,
             _preassigned_id,
             _memory_mode=_memory_mode,
+            executor=executor,
         )
 
     async def _safe_announce(self, info: SubagentInfo) -> None:

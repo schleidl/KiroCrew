@@ -312,7 +312,14 @@ def _spawn(args: argparse.Namespace) -> None:
 
 def _spawn_run(args: argparse.Namespace, base: str) -> None:
     """Spawn a subagent via the dashboard API."""
-    data = json.dumps({"task": args.task}).encode()
+    payload: dict[str, object] = {"task": args.task}
+    # Sent only when asked for, so the CLI's request stays byte-identical to what it
+    # was for every local spawn. The route validates the value and answers 400 on an
+    # unknown one; nothing is validated twice here.
+    executor = str(getattr(args, "executor", "") or "").strip()
+    if executor:
+        payload["executor"] = executor
+    data = json.dumps(payload).encode()
     req = urllib.request.Request(
         f"{base}/api/spawn",
         data=data,
