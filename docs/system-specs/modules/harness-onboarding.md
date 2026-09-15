@@ -455,6 +455,30 @@ end. The edition that ships the extra calls `register_selectable_backend`, so th
 is spellable-and-unreachable on a plain build by construction rather than by a
 narrowing somewhere downstream.
 
+**The preview on-ramp, for an operator who deployed a runtime themselves.** An edition
+is not the only way in: `DefaultProviderRegistry.register_acp_backends` — inert until
+this landed, because the baseline used to cover every known id — now registers this one
+id when `platform.defaults.agentcore_selectable_here()` says both gates are open. It
+answers the objection above rather than waiving it:
+
+| Gate | What it establishes | Why intent alone is not enough |
+|---|---|---|
+| `KIROCREW_AGENTCORE_PREVIEW` (`agentcore_preview_requested()`) | The operator asked for a remote executor | A session bills a microVM in their own account, so it must never arrive by default |
+| `load_runtime_coordinates() is not None` | A bridge can physically answer behind the socket | Asking for a harness cannot conjure the runtime; without this the switch IS the stalling session |
+
+Read per call, never cached at import, for the reason the codex switch documents: the
+gateway sets its environment before it spawns anything. Truthiness goes through
+`env_flag_enabled`, so `=0` keeps a paid executor off. A malformed runtime file fails
+CLOSED and logs why, because an unparseable runtime is exactly the stalling switch.
+
+`BASELINE_SELECTABLE_BACKENDS` does not move, so `NOT_SHIPPED_SELECTABLE` still pins the
+plain-build statement — the on-ramp registers at runtime instead of editing the frozen
+constant. And the switch cannot outrank governance: `bootstrap` registers backends
+(`register_acp_backends`) and narrows them (`narrow_selectable_backends`) a few lines
+later, so `capabilities.remote_exec` at false and an `agent_backend` deny rule both
+still win. `test_agentcore_preview_switch.py` pins each of those, including the
+ordering, since the security argument for shipping the on-ramp rests on it.
+
 **Stage 5 answers "where is the credential?" with "not on this machine".** Every
 earlier harness either signed in to kiro-cli's own identity store or brought its own
 credential file, and both answers name something on the operator's disk that the

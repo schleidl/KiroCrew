@@ -11,9 +11,15 @@ The Amazon companion subclasses or replaces these in its composition root.
 
 from __future__ import annotations
 
+import logging
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+
+# A LEAF module by its own docstring -- it imports only logging, enum, typing and
+# ``constants``, and is forbidden from importing ``config``, ``platform`` or ``acp`` --
+# so importing it here is cycle-free and costs boot nothing.
+from kiro_crew.agent_sdk import backends as acp_backends
 
 if TYPE_CHECKING:
     from kiro_crew.publish_provider import PublishProvider
@@ -51,22 +57,65 @@ from kiro_crew.platform.interfaces import (
 # reach-back is deferred to call time — never at ``security`` module load — the
 # top-level ``security`` import above stays cycle-free.
 
+logger = logging.getLogger(__name__)
+
+
+def agentcore_selectable_here() -> bool:
+    """Whether THIS install may select the remote executor. Both gates, or neither.
+
+    The narrowing on ``BASELINE_SELECTABLE_BACKENDS`` objects to one concrete state: a
+    switch on the dashboard whose every session stalls at the handshake with nothing
+    listening behind the shim's socket. An operator's opt-in does not answer that
+    objection -- it states intent, and intent cannot make a runtime exist -- so the
+    opt-in is paired with an OBSERVED runtime and the answer is the conjunction:
+
+    * the operator asked, via ``KIROCREW_AGENTCORE_PREVIEW``; and
+    * the ``kirocrew[agentcore]`` extra is importable AND a runtime is configured,
+      which together are what put a bridge behind that socket.
+
+    NOT a governance decision, and deliberately not spelled as one. ``capabilities.
+    remote_exec`` is evaluated per spawn and a deny rule narrows this registry through
+    ``apply_selectable_denials`` -- both run AFTER registration (``bootstrap`` registers
+    at the ``register_acp_backends`` call and narrows a few lines later), so a ceiling
+    still wins over anything decided here. This function answers only "could a session
+    physically start", which is the question the narrowing actually asks.
+
+    Fail-closed on a broken runtime file: ``load_runtime_coordinates`` raises rather
+    than returning a default, and an install whose coordinates do not parse is exactly
+    the stalling dashboard switch, so the refusal is the right answer, not a fallback.
+    """
+    if not acp_backends.agentcore_preview_requested():
+        return False
+    try:
+        from kiro_crew.agentcore.bridge import load_runtime_coordinates
+
+        return load_runtime_coordinates() is not None
+    except Exception:
+        logger.info(
+            "agentcore preview requested but no usable runtime is configured; "
+            "leaving the backend unselectable",
+            exc_info=True,
+        )
+        return False
+
 
 class DefaultProviderRegistry:
-    """Registers nothing: every KNOWN backend is already in the baseline."""
+    """Registers nothing by default: every SHIPPED backend is already in the baseline."""
 
     def create_factory(self, cfg: Any) -> Callable[..., Any]:
         return cfg.create_provider_factory()
 
     def register_acp_backends(self) -> None:
-        # Nothing to register, and nothing this seam could register: the baseline now
-        # covers every id in ``ACP_BACKENDS_KNOWN``, and
-        # ``register_selectable_backend`` rejects an id outside that set, so there is
-        # no id it accepts that is not already selectable. The seam stays because the
-        # ProviderRegistry protocol declares it and an edition overrides this method;
-        # an edition adding a genuinely new harness has to widen
-        # ``ACP_BACKENDS_KNOWN`` as well, which is a core change, not an extension
-        # point this hook opens on its own.
+        # The baseline covers every id in ``ACP_BACKENDS_KNOWN`` except ONE.
+        # ``agentcore`` is known but deliberately not baseline-selectable (see the
+        # narrowing note on ``BASELINE_SELECTABLE_BACKENDS``), so it is the single id
+        # this seam can still register -- which is why the seam is no longer inert on a
+        # public build. Everything else remains true: ``register_selectable_backend``
+        # rejects an id outside the known set, and an edition adding a genuinely new
+        # harness must widen that set, which is a core change rather than something
+        # this hook opens on its own.
+        if agentcore_selectable_here():
+            acp_backends.register_selectable_backend(acp_backends.ACP_BACKEND_AGENTCORE)
         return None
 
 

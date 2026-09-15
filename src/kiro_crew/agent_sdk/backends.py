@@ -807,6 +807,42 @@ def codex_runs_on_acp_runtime() -> bool:
     return env_flag_enabled(ENV_CODEX_ACP_RUNTIME)
 
 
+#: The remote-executor preview switch. OFF by default, and it must stay that way: an
+#: agentcore session bills a microVM in the operator's own AWS account, so this is not
+#: a switch anyone may get by accident.
+#:
+#: Why an env read rather than widening ``BASELINE_SELECTABLE_BACKENDS``: the baseline
+#: is what a PLAIN build can serve, and a plain build still cannot -- the narrowing
+#: note above this set gives the two preconditions. Why an env read rather than a new
+#: registry, for the same reasons the codex switch below gives: ``agentcore`` is
+#: already in ``ACP_BACKENDS_KNOWN``, the only open question is whether THIS install
+#: may select it, an env read holds no state and is re-read per call so a test can turn
+#: it on around one assertion, and it cannot be aimed at another harness.
+#:
+#: Requesting is not getting. This flag alone never makes the id selectable: the
+#: registration site pairs it with an OBSERVED runtime, because the objection the
+#: narrowing raises is a harness whose sessions stall with nothing behind the socket,
+#: and an operator's intent does not answer that -- only a configured runtime does.
+ENV_AGENTCORE_PREVIEW = "KIROCREW_AGENTCORE_PREVIEW"
+
+
+def agentcore_preview_requested() -> bool:
+    """Whether the operator asked for the remote executor. Default ``False``.
+
+    Read per call and never cached at import, for the reason
+    :func:`codex_runs_on_acp_runtime` documents: the gateway sets its environment
+    before it spawns anything, so a value frozen at import answers for whichever ran
+    first. Truthiness goes through :func:`kiro_crew.constants.env_flag_enabled` so an
+    operator who exports ``=0`` to keep a paid executor OFF is not handed it by a bare
+    ``bool()``.
+
+    Named *requested*, not *enabled*: it reports intent, and intent is only half the
+    gate. Ask :func:`kiro_crew.platform.defaults.agentcore_selectable_here` for the
+    decision.
+    """
+    return env_flag_enabled(ENV_AGENTCORE_PREVIEW)
+
+
 def acp_runtime_backends() -> FrozenSet[str]:
     """Backends served by AcpRuntime in THIS process, preview switch included.
 
