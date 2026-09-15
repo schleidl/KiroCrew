@@ -2262,6 +2262,8 @@ capability AND the `playwright-cli` command),
 `capabilities.publish` (artifact publish chokepoint — see below),
 `capabilities.agentcore` (opt-in agent workload identity + Gateway MCP —
 see below),
+`capabilities.remote_exec` (opt-in remote execution of an agent's own turns —
+spawn admission, fail-closed and audited; see below),
 `capabilities.theme_persona` / `capabilities.theme_install`,
 `capabilities.mobile_connect` (phone-connection methods: filters the
 `GET /api/mobile-connect/methods` listing AND is re-checked fail-closed inside
@@ -2367,6 +2369,51 @@ is a known value. The public `DefaultAgentIdentityProvider` is disabled, so a
 standalone host with no policy is unchanged. Later stack PRs consult this row
 at rebuild / Gateway injection; naming it here is what lets a policy pin the
 capability before those chokepoints land.
+
+`capabilities.remote_exec` is a `CapabilityGate` (opt-in:
+`capability_default=False`, like `capabilities.agentcore`). It governs running an
+agent's OWN turns on a remote executor — the model turn, its tool calls and the
+repository checkout leave this machine — and it is a catalog data row plus the
+`identifier` matcher the `CAPABILITY` archetype already binds: no `_MATCHERS`
+entry, no `resolve` / `gate_decision` / `_parse_controls` branch (pinned against
+the source in `test_remote_exec_governance.py`), `CONTRACT_VERSION` unchanged.
+
+The chokepoint is spawn admission —
+`subagent_manager.admission._vet_remote_exec_governance`, called from
+`spawn_impl` immediately after the `capabilities.spawn` gate and BEFORE the
+stagger/queue branch — and it requires an **affirmative** grant rather than the
+mere absence of a denial. Two conjuncts, the same shape `capabilities.agentcore`
+consumption uses:
+
+1. `governance.remote_exec_enabled(ceiling)` must be true. This is a policy-side
+   positive read (`False` for no ceiling, an omitted row, or a disabled one), and
+   it is what makes an ungoverned host refuse. It is **not** a change to the
+   omission contract above: `resolve` still answers an unnamed
+   `capabilities.remote_exec` with `permitted` at `layer == "default"`, so the
+   missing-control audit signal is intact — it is the CONSUMER that declines to
+   ship the operator's repository to a remote account on "nobody said no".
+2. `governance_permits(REMOTE_EXEC_SCOPE, "", fail_closed=True)` must not deny,
+   which is what lets a per-surface PROFILE take a policy grant back
+   (`POLICY ∩ PROFILE`, tightest-wins).
+
+An executor kind outside `admission.REMOTE_EXECUTORS` is refused before either
+conjunct runs — identity is positive membership, so a kind nobody has reasoned
+about is refused rather than admitted by matching nothing. A governance
+evaluation error denies: `PlatformCompositionError` propagates (fail-closed CPP),
+anything else is recorded through `audit_governance_degraded("subagent_remote_exec",
+… failed_closed=True)` and denied.
+
+Every refusal writes a SEL row (`tool_name="spawn_run"`, `outcome="denied"`,
+`metadata.scope="capabilities.remote_exec"`, `metadata.executor`) and the
+refusal PROSE names the scope, because the operator who has to grant it cannot
+act on "refused by governance". The refusal is a refusal: a remote member is
+never re-tried locally, and a remote member that would QUEUE is refused too,
+because the queue round-trip re-enters through the facade's `spawn(**params)`,
+which carries no `executor` — draining it would run the work locally, which is
+the same silent downgrade arriving by a different door. Naming the row now is
+what lets a policy pin remote execution off before the bridge (WP3) and the
+spawn surface (WP4) land; the runtime's coordinates are keystone data, not
+policy data — see [security](security.md).
 
 `capabilities.publish` is a `CapabilityGate` (opt-in: `capability_default=False`)
 with an inner `destinations` `ScopedRuleset` (`identifier` matcher) bounding

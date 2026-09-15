@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from ._component import ManagerComponent
@@ -28,6 +29,101 @@ if TYPE_CHECKING:
         uuid,
         validate_cwd,
     )
+
+
+#: This module's OWN logger. Deliberately not the ``logger`` name imported under
+#: ``TYPE_CHECKING`` above: that one resolves inside the ``*_impl`` methods, which
+#: ``bind_component_globals`` reruns on ``subagent``'s namespace. Module-level
+#: helpers in this file are NOT rebound, so they need a real one here.
+_LOG = logging.getLogger(__name__)
+
+#: The one remote executor kind WP2 registers. Identity is POSITIVE membership in
+#: this set; ``EXECUTOR_LOCAL`` (the empty string) is the ordinary in-process spawn
+#: every existing caller already asks for by passing nothing at all, so a baseline
+#: build reaches no new code.
+EXECUTOR_LOCAL: str = ""
+EXECUTOR_AGENTCORE: str = "agentcore"
+REMOTE_EXECUTORS: frozenset[str] = frozenset({EXECUTOR_AGENTCORE})
+
+
+def _vet_remote_exec_governance(
+    parent_session_key: str, executor: str, *, app: str = ""
+) -> str | None:
+    """Return a denial reason if *executor* may not run remotely, else ``None``.
+
+    ``EXECUTOR_LOCAL`` is answered ``None`` without consulting governance: an
+    ordinary local spawn is not this gate's subject and must cost nothing.
+
+    Fail-closed in three separate directions, because each one is a way a remote
+    spawn could otherwise happen unasked:
+
+    1. **An unknown executor kind is refused**, not passed through. Membership is
+       positive (``REMOTE_EXECUTORS``), so a kind added later is refused until it is
+       listed and reasoned about, rather than admitted by not matching anything.
+    2. **The capability must be AFFIRMATIVELY granted.** The evaluator's omission
+       contract makes an unnamed capability ungoverned-and-permitted, which is
+       correct there and would be wrong here -- on a host with no policy at all,
+       "nobody denied it" would be enough to ship the operator's repository and
+       tool calls to a remote account. So ``remote_exec_enabled`` must say yes AND
+       ``governance_permits`` must not deny (that second half is what lets a
+       per-surface PROFILE take a policy grant back, tightest-wins).
+    3. **A governance evaluation error denies.** ``PlatformCompositionError``
+       propagates as the CPP contract requires; anything else is audited as a
+       degrade and denied.
+
+    The caller must REFUSE the spawn on a non-``None`` return. It must never fall
+    back to a local spawn: the request was "run this somewhere else", and answering
+    it by running untrusted work on the operator's own machine is not a narrower
+    outcome, it is a different and worse one.
+    """
+    if executor == EXECUTOR_LOCAL:
+        return None
+    if executor not in REMOTE_EXECUTORS:
+        return f"unknown executor {executor!r}"
+
+    from kiro_crew.platform.context import PlatformCompositionError
+
+    try:
+        from kiro_crew.platform.context import current_context
+        from kiro_crew.platform.governance import REMOTE_EXEC_SCOPE, remote_exec_enabled
+        from kiro_crew.platform.governance_profiles import governance_permits
+
+        ctx = current_context()
+        if not remote_exec_enabled(getattr(ctx, "governance", None)):
+            return (
+                f"remote execution on {executor!r} requires {REMOTE_EXEC_SCOPE} to be "
+                "enabled in the enterprise security policy; it is not granted here"
+            )
+        decision = governance_permits(
+            REMOTE_EXEC_SCOPE,
+            "",
+            session_key=parent_session_key,
+            app=app,
+            fail_closed=True,
+        )
+        if not getattr(decision, "permitted", True):
+            # The scope is prefixed rather than left to the Decision's own prose:
+            # every refusal on this path must name the row an operator has to grant,
+            # and a profile-layer reason does not necessarily carry it.
+            detail = getattr(decision, "reason", "") or "denied by the active profile"
+            return f"{REMOTE_EXEC_SCOPE} is not permitted for this surface: {detail}"
+        return None
+    except PlatformCompositionError:
+        raise
+    except Exception:
+        try:
+            from kiro_crew.platform.governance import REMOTE_EXEC_SCOPE
+            from kiro_crew.platform.governance_profiles import audit_governance_degraded
+
+            audit_governance_degraded(
+                "subagent_remote_exec",
+                session_key=parent_session_key,
+                scope=REMOTE_EXEC_SCOPE,
+                failed_closed=True,
+            )
+        except Exception:
+            _LOG.debug("governance degrade audit unavailable", exc_info=True)
+        return "remote execution denied: governance evaluation failed (fail-closed)"
 
 
 class SpawnAdmissionCoordinator(ManagerComponent):
@@ -61,6 +157,8 @@ class SpawnAdmissionCoordinator(ManagerComponent):
         _from_queue: bool = False,
         _preassigned_id: str = "",
         _memory_mode: str | None = None,
+        *,
+        executor: str = EXECUTOR_LOCAL,
     ) -> SubagentInfo | None:
         """Spawn a subagent for *task*.
 
@@ -107,6 +205,14 @@ class SpawnAdmissionCoordinator(ManagerComponent):
                 set session-level auto-approve.  Only honored from
                 authenticated internal callers (X-Internal-Secret).
             silent (bool): Suppress completion notifications.
+            executor (str): Which executor runs the member. ``EXECUTOR_LOCAL``
+                (the default, and what every caller that passes nothing gets) is
+                the ordinary local spawn. A remote kind must be a member of
+                ``REMOTE_EXECUTORS`` AND be granted
+                ``capabilities.remote_exec``; otherwise the spawn is REFUSED
+                here. It is never downgraded to a local spawn -- see
+                ``_vet_remote_exec_governance``. Keyword-only, so the facade's
+                positional forwarding is unaffected.
 
         Returns:
             SubagentInfo | None: Agent metadata, or None if at capacity.
@@ -402,9 +508,106 @@ class SpawnAdmissionCoordinator(ManagerComponent):
                 )
             )
 
+        # --- Governance: remote-executor capability gate ---
+        # Ordered immediately after the spawn gate and BEFORE the stagger/queue
+        # branch, so a refused remote spawn never occupies a queue slot. Two
+        # properties are load-bearing:
+        #
+        #  * the refusal NAMES the scope, because the operator who has to grant it
+        #    cannot act on "refused by governance";
+        #  * the spawn is REFUSED, never re-tried locally. A silent downgrade would
+        #    answer "run this on a remote executor" by running it on the operator's
+        #    own machine -- the exact opposite of what was asked, and a worse blast
+        #    radius than the request carried.
+        from kiro_crew.subagent_manager.admission import EXECUTOR_LOCAL as _EXECUTOR_LOCAL
+        from kiro_crew.subagent_manager.admission import (
+            _vet_remote_exec_governance,
+        )
+
+        gov_exec_err = _vet_remote_exec_governance(parent_session_key, executor, app=app)
+        if gov_exec_err:
+            logger.warning("Subagent spawn refused by governance: %s", gov_exec_err)
+            # Context-aware pass, for the reason the memory-guard site above states:
+            # a host with a companion loaded must not have its audit metadata scanned
+            # with the weaker OSS baseline. The slice comes AFTER redaction so a
+            # companion-only credential cannot be split at the boundary. Imported here
+            # because this function is rebound onto the subagent module's namespace.
+            from kiro_crew.platform.context import redact_log_via_context
+
+            _exec_task_note = redact_log_via_context(_redacted_task)[:120]
+            sel().log_tool_invocation(
+                session_key=parent_session_key or "",
+                source="subagent",
+                tool_name="spawn_run",
+                outcome="denied",
+                error=gov_exec_err,
+                metadata={
+                    "agent": agent,
+                    "executor": executor,
+                    "scope": "capabilities.remote_exec",
+                    "task": _exec_task_note,
+                },
+            )
+            return self._manager._announce_rejection(
+                SubagentInfo(
+                    id=agent_id,
+                    task=_redacted_task,
+                    agent=agent,
+                    parent_session_key=parent_session_key,
+                    done=True,
+                    error=f"spawn refused by governance: {gov_exec_err}",
+                    batch_id=batch_id,
+                    batch_total=max(0, int(batch_total)),
+                )
+            )
+
         now = time.monotonic()
         should_queue, slot_free = self._manager._should_stagger_queue(now)
         if should_queue:
+            # A remote member must not WAIT here. The queue round-trip re-enters
+            # through the facade's ``spawn(**params)``, whose signature carries no
+            # ``executor`` -- so a queued remote spawn would drain as a LOCAL one,
+            # which is the silent downgrade the gate above exists to prevent, arriving
+            # by a different door. Refuse instead, the way a prevalidated app spawn is
+            # refused rather than queued with a stale ownership check. WP4, which owns
+            # the facade signature, replaces this with real queue carriage.
+            if executor != _EXECUTOR_LOCAL:
+                logger.warning(
+                    "Rejecting remote spawn that would queue (executor=%s): "
+                    "the queue round-trip cannot carry the executor",
+                    executor,
+                )
+                from kiro_crew.platform.context import redact_log_via_context
+
+                _queue_task_note = redact_log_via_context(_redacted_task)[:120]
+                sel().log_tool_invocation(
+                    session_key=parent_session_key or "",
+                    source="subagent",
+                    tool_name="spawn_run",
+                    outcome="denied",
+                    error="remote spawn would queue",
+                    metadata={
+                        "executor": executor,
+                        "scope": "capabilities.remote_exec",
+                        "task": _queue_task_note,
+                    },
+                )
+                return self._manager._announce_rejection(
+                    SubagentInfo(
+                        id=agent_id,
+                        task=_redacted_task,
+                        agent=agent,
+                        parent_session_key=parent_session_key,
+                        done=True,
+                        error=(
+                            "spawn refused: the spawn queue is at capacity and a remote "
+                            "spawn is not queued, because draining it would silently run "
+                            "the work locally — retry when a slot is free"
+                        ),
+                        batch_id=batch_id,
+                        batch_total=max(0, int(batch_total)),
+                    )
+                )
             # A prevalidated app spawn must NOT sit in the queue. _agent_prevalidated
             # skips the agent-directory ownership scan on drain (it was validated
             # off the loop at request time); if it waited in the queue, the app

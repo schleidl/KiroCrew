@@ -1300,6 +1300,27 @@ SCOPE_CATALOG: Dict[str, ScopeSpec] = {
     # boot-abort when ``boot.fail_closed``. Data row only; CONTRACT_VERSION
     # and the evaluator are untouched.
     "capabilities.agentcore": ScopeSpec(CAPABILITY, capability_default=False),
+    # Running an agent's own turns on a REMOTE executor (the AgentCore runtime
+    # backend): the model turn, the tool calls and the repository checkout leave
+    # this machine. Opt-in like ``messaging`` / ``publish`` / ``agentcore``, and for
+    # a sharper reason than either -- an operator who never asked for remote
+    # execution must not get it from a default.
+    #
+    # Data row only: no evaluator branch, and no ``_MATCHERS`` entry either, which
+    # is what this module's header means by "at most one matcher/scale registry
+    # entry" -- a plain on/off capability carries no inner ScopedRuleset, so it
+    # binds ``_DEFAULT_MATCHER`` exactly as ``capabilities.agentcore`` does.
+    #
+    # The chokepoint is spawn admission
+    # (``subagent_manager.admission._vet_remote_exec_governance``) and it requires
+    # an AFFIRMATIVE grant, read through :func:`remote_exec_enabled`, rather than
+    # merely the absence of a denial. That is deliberate and is NOT a change to the
+    # omission contract above: omission still resolves ungoverned-and-permitted at
+    # the evaluator (``Decision.layer == "default"``, so the audit signal survives),
+    # and it is the CONSUMER that declines to act without a positive answer -- the
+    # same two-conjunct shape ``capabilities.agentcore`` consumption uses, where
+    # ``agentcore_posture(ceiling)`` is ``None`` for an omitted row.
+    "capabilities.remote_exec": ScopeSpec(CAPABILITY, capability_default=False),
     # Publishing an artifact's bytes to an external destination is an
     # exfil/external-side-effect surface (like messaging), so it is opt-in
     # (capability_default=False): a policy that names ``publish`` while omitting
@@ -2165,6 +2186,33 @@ def _command_deny_patterns(control: object) -> Tuple[str, ...]:
 _AGENTCORE_SCOPE = "capabilities.agentcore"
 _AGENTCORE_POSTURES = frozenset({"workload", "login"})
 _AGENTCORE_POLICY_ONLY = frozenset({"posture", "gateway_url", "workload_name"})
+
+#: The scope name spawn admission consults before a remote spawn. Public, so the
+#: chokepoint and its refusal message name the scope from one place -- an operator
+#: reading the refusal has to be able to find the row it names.
+REMOTE_EXEC_SCOPE = "capabilities.remote_exec"
+
+
+def remote_exec_enabled(ceiling: Optional[GovernanceCeiling]) -> bool:
+    """Is ``capabilities.remote_exec`` AFFIRMATIVELY enabled on *ceiling*?
+
+    ``False`` when there is no ceiling, when the row is omitted, and when it is
+    present but disabled. The single reader; do not re-parse raw policy JSON.
+
+    This is the POSITIVE half of the remote-spawn gate, and the distinction from
+    :func:`resolve` matters. The evaluator's contract is that an unnamed scope is
+    ungoverned and therefore permitted, which is right for the evaluator and wrong
+    for this consumer: on an ungoverned host "nobody said no" would then be enough
+    to ship the operator's repository to a remote account. So admission ANDs this
+    reader with ``governance_permits`` -- the reader supplies "somebody said yes",
+    the permit supplies the POLICY ∩ PROFILE intersection that lets a per-surface
+    profile take the grant back. Exactly the shape :func:`agentcore_posture` gives
+    the identity seam, where an omitted row reads ``None``.
+    """
+    if ceiling is None:
+        return False
+    control = ceiling.controls.get(REMOTE_EXEC_SCOPE)
+    return isinstance(control, CapabilityGate) and control.enabled
 
 
 def _capability_raw_for_gate(
@@ -4480,6 +4528,8 @@ __all__ = [
     "MODE_ALLOW",
     "MODE_DENY",
     "COMMANDS_SCOPE",
+    "REMOTE_EXEC_SCOPE",
+    "remote_exec_enabled",
     "SIGNATURE_VERIFIED",
     "SIGNATURE_UNVERIFIED",
     "SIGNATURE_UNSIGNED",

@@ -436,6 +436,31 @@ _CREW_READONLY_LEAVES: tuple[str, ...] = (
     # mutators via the dashboard/CLI) runs unsandboxed. Absent-file coverage
     # mirrors the sidecar's own entry via the pre-create list.
     "agent_model_state.json.lock",
+    # The remote-executor runtime coordinates (AgentCore runtime ARN, region,
+    # endpoint qualifier). READONLY, and the choice is forced by the same
+    # direction-of-harm argument the ceilings above make, one layer out:
+    #
+    #  * a WRITE would let the agent name the remote executor its own turns run
+    #    on -- an ARN in an account the operator never consented to, reached with
+    #    the gateway's own signing identity -- so it is the ceiling shape, not the
+    #    config shape, and it deliberately does NOT live in agent-writable
+    #    ``config.json``;
+    #  * HIDDEN is WRONG here for the reason the READONLY note above gives: a
+    #    reader that finds this leaf absent resolves to "no remote runtime is
+    #    configured". Masking it would therefore not protect the coordinates, it
+    #    would only make an already-provisioned runtime read as unconfigured --
+    #    and the leaf holds no secret at all (an ARN, a region, a qualifier; the
+    #    model credential lives in Secrets Manager and the AWS signature is made
+    #    in the unsandboxed gateway), so masking buys nothing and costs the
+    #    operator the ability to see why a remote spawn was refused;
+    #  * VISIBLE would leave the write on the tool gate alone, and a spawned
+    #    interpreter's ``open()`` never routes through it.
+    #
+    # The only writer is the human provisioning path (dashboard / CLI, running
+    # unsandboxed); every legitimate reader opens the path directly. Also in
+    # ``_CREW_PRECREATE_READONLY_FILE_LEAVES`` -- the Linux seal needs an existing
+    # file to bind, and the default state of this leaf is absent.
+    "agentcore_runtime.json",
 )
 
 #: Crew-home leaves that MUST stay read-write for a sandboxed process. Every entry is
@@ -802,6 +827,19 @@ _CREW_PRECREATE_READONLY_FILE_LEAVES: tuple[str, ...] = (
     # stop. An empty lock file is absent-equivalent by definition: its content
     # is never read, only its identity is locked.
     "agent_model_state.json.lock",
+    # The remote-executor runtime coordinates. Both criteria hold. (1) An empty
+    # ``{}`` document is absent-equivalent BY CONTRACT: a document carrying no
+    # runtime ARN means "no remote runtime is configured", which is exactly what
+    # an absent file means, and both refuse a remote spawn. (2) A stale sealed
+    # read fails toward refusal: the provisioning writer publishes through
+    # ``atomic_write`` (a new inode), so a sandboxed reader stays frozen at "not
+    # configured" -- narrower than the truth, and it grants nothing, because the
+    # gateway process that actually signs the AgentCore call is unsandboxed and
+    # reads the real document. Without this entry the seal skips the absent leaf,
+    # which is its state on every install that has not provisioned a runtime --
+    # i.e. exactly the default, where the name would stay creatable from inside
+    # the sandbox.
+    "agentcore_runtime.json",
 )
 
 #: The one masked leaf that carries its own argument (see the sibling-gap note
