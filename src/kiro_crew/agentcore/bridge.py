@@ -59,7 +59,7 @@ import stat
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable, Protocol
+from typing import Any, AsyncIterator, Callable, Protocol
 
 from kiro_crew.acp.harness.agentcore import RECONNECT_POLL_INTERVAL_MS
 from kiro_crew.agentcore.liveness import RemoteLiveness
@@ -79,6 +79,7 @@ __all__ = [
     "load_runtime_coordinates",
     "mint_owner_token",
     "mint_session_id",
+    "prepare_remote_session",
     "socket_path_for",
 ]
 
@@ -780,29 +781,35 @@ class AgentCoreTransport:
         )
 
 
-async def serve_session(
-    transport: Transport,
+def prepare_remote_session(
     *,
-    start_body: dict[str, Any],
-    socket_root: Path,
-    session_id: str | None = None,
-    owner_token: str | None = None,
+    socket_root: Path | None = None,
+    coordinates: RuntimeCoordinates | None = None,
     poll_interval_ms: int = RECONNECT_POLL_INTERVAL_MS,
-) -> tuple[AgentCoreBridge, Awaitable[BridgeOutcome]]:
-    """Mint a session's coordinates and return the bridge plus its running future.
+) -> AgentCoreBridge:
+    """Mint one remote session's coordinates and return its bridge, NOT started.
 
-    Two values rather than one because the CALLER needs :attr:`AgentCoreBridge.spawn_env`
-    before the session can make progress: the relay does not exist until ``AcpClient``
-    spawns it with those two environment variables, and this bridge dials a socket the
-    relay has not bound yet. So the bridge is handed back immediately and its work runs
-    concurrently.
+    Construction and running are separate on purpose. The bridge's
+    :attr:`AgentCoreBridge.spawn_env` has to be in the agent child's environment
+    BEFORE the harness reads it -- the harness refuses a spawn whose two coordinates are
+    absent -- and that environment is assembled synchronously, at provider construction,
+    where there is no event loop to run anything on. So the caller builds the bridge
+    here, merges ``spawn_env`` into the child env, and starts :meth:`AgentCoreBridge.run`
+    from its own async lifecycle once there is a loop.
+
+    Fails CLOSED on an absent or incomplete keystone leaf, by raising
+    :class:`BridgeUnconfigured` out of :func:`load_runtime_coordinates`: a session that
+    cannot name its runtime must not fall back to one nobody chose.
     """
-    sid = session_id or mint_session_id()
-    bridge = AgentCoreBridge(
-        transport,
-        session_id=sid,
-        owner_token=owner_token or mint_owner_token(),
-        socket_path=socket_path_for(sid, root=socket_root),
+    from kiro_crew.config.loader import config_dir
+
+    coords = coordinates if coordinates is not None else load_runtime_coordinates()
+    root = socket_root if socket_root is not None else config_dir() / "agentcore-sockets"
+    session_id = mint_session_id()
+    return AgentCoreBridge(
+        AgentCoreTransport(coords),
+        session_id=session_id,
+        owner_token=mint_owner_token(),
+        socket_path=socket_path_for(session_id, root=root),
         poll_interval_ms=poll_interval_ms,
     )
-    return bridge, asyncio.ensure_future(bridge.run(start_body))

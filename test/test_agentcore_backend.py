@@ -114,7 +114,32 @@ def test_the_routing_member_is_agent_spec() -> None:
 # ── The one gate, driven for real ──
 
 
-def test_the_factory_gate_resolves_the_executor_override(registered, tmp_path) -> None:
+@pytest.fixture()
+def bridge_bound(monkeypatch):
+    """Stub the remote-session binding that provider construction now performs.
+
+    WP4 made the factory mint a bridge for a resolved remote backend, because the
+    harness refuses a spawn whose two coordinates are absent from the child environment
+    -- and minting one loads the keystone runtime leaf, which fails CLOSED when no
+    runtime is configured. These tests are about the SELECTION GATE, not about the
+    bridge, so the binding is stubbed: configuring a real leaf would make them depend on
+    the operator's own account coordinates, and `test_agentcore_bridge.py` already pins
+    the fail-closed behaviour directly.
+    """
+    import kiro_crew.agentcore.bridge as bridge_mod
+
+    class _StubBridge:
+        spawn_env = {
+            "KIROCREW_AGENTCORE_SOCKET": "/tmp/wp4-stub.sock",
+            "KIROCREW_AGENTCORE_OWNER_TOKEN": "stub-token",
+        }
+
+    monkeypatch.setattr(bridge_mod, "prepare_remote_session", lambda **_kw: _StubBridge())
+
+
+def test_the_factory_gate_resolves_the_executor_override(
+    registered, bridge_bound, tmp_path
+) -> None:
     """An executor passed to the provider factory selects the remote backend."""
     factory = KiroCrewConfig().create_provider_factory()
     provider = factory("wp2:override", cwd=str(tmp_path), executor=ACP_BACKEND_AGENTCORE)
@@ -145,7 +170,7 @@ def test_an_unselectable_executor_degrades_to_kiro(tmp_path, bogus) -> None:
     assert _backend_of(provider) == ACP_BACKEND_KIRO
 
 
-def test_the_gate_is_reached_exactly_once(registered, monkeypatch, tmp_path) -> None:
+def test_the_gate_is_reached_exactly_once(registered, bridge_bound, monkeypatch, tmp_path) -> None:
     """H4/H13: ONE selection call on the per-session path, not two.
 
     A second gate — an executor-specific coercion beside the existing one — shows up

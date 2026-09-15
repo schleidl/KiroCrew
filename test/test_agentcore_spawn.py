@@ -160,3 +160,84 @@ def test_the_cli_declares_the_flag() -> None:
     source = Path(inspect.getfile(cli)).read_text(encoding="utf-8")
     spawn_block = source.split('spawn_sub.add_parser("run"')[1].split("spawn_sub.add_parser")[0]
     assert '"--executor"' in spawn_block
+
+
+# ── the bridge's lifecycle on the provider ──
+
+
+class _FakeBridge:
+    """Stands in for AgentCoreBridge: records the calls the provider must make."""
+
+    def __init__(self) -> None:
+        self.spawn_env = {"KIROCREW_AGENTCORE_SOCKET": "/tmp/x.sock", "OWNER": "t"}
+        self.runs: list[dict] = []
+        self.stops = 0
+
+    async def run(self, start_body: dict) -> None:
+        self.runs.append(start_body)
+        import asyncio
+
+        await asyncio.sleep(3600)  # a live session: only teardown ends it
+
+    async def stop(self) -> None:
+        self.stops += 1
+
+
+def _provider_with(bridge: object) -> object:
+    from kiro_crew.providers.acp import AcpProvider
+
+    return AcpProvider(acp_backend="agentcore", remote_bridge=bridge)
+
+
+def test_a_local_provider_has_no_bridge_and_teardown_is_a_no_op() -> None:
+    """The whole local path must be untouched: no bridge, no task, no new failure."""
+    import asyncio
+
+    from kiro_crew.providers.acp import AcpProvider
+
+    provider = AcpProvider(acp_backend="")
+    assert provider._remote_bridge is None
+    assert provider._remote_task is None
+    asyncio.run(provider._start_remote_bridge())
+    asyncio.run(provider._stop_remote_bridge())
+
+
+def test_the_bridge_starts_once_and_stops_on_teardown() -> None:
+    """A second start must not open a second socket: the relay accepts exactly one."""
+    import asyncio
+
+    bridge = _FakeBridge()
+    provider = _provider_with(bridge)
+
+    async def exercise() -> None:
+        await provider._start_remote_bridge()  # type: ignore[attr-defined]
+        await provider._start_remote_bridge()  # type: ignore[attr-defined]
+        # create_task only SCHEDULES: yield once so the bridge's coroutine actually
+        # reaches its first line, or this asserts on a task that has not run.
+        await asyncio.sleep(0)
+        assert len(bridge.runs) == 1, "a resume or model swap must not re-dial"
+        assert provider._remote_task is not None  # type: ignore[attr-defined]
+        await provider._stop_remote_bridge()  # type: ignore[attr-defined]
+        assert bridge.stops == 1
+        assert provider._remote_task is None  # type: ignore[attr-defined]
+        assert provider._remote_bridge is None  # type: ignore[attr-defined]
+
+    asyncio.run(exercise())
+
+
+def test_a_bridge_whose_stop_raises_does_not_break_teardown() -> None:
+    """Teardown runs on the error path too; a raising stop would mask the real cause."""
+    import asyncio
+
+    class _Angry(_FakeBridge):
+        async def stop(self) -> None:
+            raise RuntimeError("worker unreachable")
+
+    provider = _provider_with(_Angry())
+
+    async def exercise() -> None:
+        await provider._start_remote_bridge()  # type: ignore[attr-defined]
+        await provider._stop_remote_bridge()  # type: ignore[attr-defined]
+        assert provider._remote_task is None  # type: ignore[attr-defined]
+
+    asyncio.run(exercise())

@@ -5266,6 +5266,7 @@ class KiroCrewConfig:
             # kiro — the member thread then runs as plain chat and the mount
             # step logs why.
             # circular import: members sits above config in the layering.
+            from kiro_crew.acp.types import ACP_BACKEND_AGENTCORE
             from kiro_crew.members import select_provider_backend
 
             _backend = select_provider_backend(
@@ -5274,6 +5275,22 @@ class KiroCrewConfig:
                 self.agent.acp_backend,
                 executor,
             )
+            # A remote session needs a bridge behind the relay's socket, and the harness
+            # REFUSES a spawn whose two coordinates are absent from the child's
+            # environment -- so the binding has to happen here, before the environment is
+            # handed over, rather than at the first prompt. Only the minting is done
+            # here: the bridge is not started, because there is no event loop at
+            # provider construction. ``AcpProvider`` owns its run and its stop.
+            #
+            # Keyed off the RESOLVED backend rather than off ``executor``, so a request
+            # that degraded to Kiro at the gate above cannot reach this branch and
+            # silently acquire a socket nothing will serve.
+            _remote_bridge = None
+            if _backend == ACP_BACKEND_AGENTCORE:
+                from kiro_crew.agentcore.bridge import prepare_remote_session
+
+                _remote_bridge = prepare_remote_session()
+                extra_env = {**(extra_env or {}), **_remote_bridge.spawn_env}
             return AcpProvider(
                 work_dir=wdir,
                 model=m,
@@ -5290,6 +5307,7 @@ class KiroCrewConfig:
                 tool_search_min_tokens=tool_search_min_tokens,
                 mcp_gateway_overlay=_gw_overlay,
                 mcp_gateway_socket=_gw_socket,
+                remote_bridge=_remote_bridge,
             )
 
         return _acp
