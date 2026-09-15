@@ -1,0 +1,21 @@
+{
+  "name": "agentcore-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Bedrock AgentCore Runtime container that runs a kiro-cli ACP agent behind the remote-agent worker contract.",
+  "main": "server.mjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.658.0",
+    "@aws-sdk/client-secrets-manager": "3.658.0",
+    "@aws-sdk/client-sts": "3.658.0",
+    "@aws-sdk/credential-provider-node": "3.658.0"
+  }
+}
