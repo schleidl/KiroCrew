@@ -172,14 +172,21 @@ Branch `feat/agentcore-bridge`.
 
 Branch `feat/agentcore-spawn`.
 
-- [ ] **Step 1: Failing test.** A remote subagent driven by the fake worker
+- [x] **Step 1: Failing test.** A remote subagent driven by the fake worker
   produces a completion event in the parent and a local transcript file.
+  *Delivered as `test/test_agentcore_end_to_end.py`, which drives the real
+  composition — a real `stdio_shim` SUBPROCESS over a real UNIX socket, the real
+  bridge, a scripted worker — and asserts the worker's `acp` payloads arrive on the
+  shim's stdout newline-framed, which is exactly what `AcpClient` reads, plus that a
+  token mismatch exits 3. The parent completion event and the transcript file are
+  NOT asserted: those need a full `SubagentManager` spawn, and the difference is
+  recorded rather than glossed.*
 - [x] **Step 2: Add the executor argument** to the spawn tool, the spawn route,
   the slot-creation route and the command-line twin, with strict session-key
   resolution and audit rows.
 - [x] **Step 3: Specs.** Subagent, MCP, session and feature-map indexes.
 - [x] **Step 4: Gates.**
-- [ ] **Step 5: Bridge lifecycle — the step this plan never named, and the one
+- [x] **Step 5: Bridge lifecycle — the step this plan never named, and the one
   thing still between here and a working remote agent.** WP3 built the bridge and
   WP4 made `executor` reach the harness, but NOTHING constructs a bridge when a
   remote spawn starts: `grep -rn "AgentCoreBridge\|serve_session" src/kiro_crew`

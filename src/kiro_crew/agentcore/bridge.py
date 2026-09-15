@@ -785,6 +785,7 @@ def prepare_remote_session(
     *,
     socket_root: Path | None = None,
     coordinates: RuntimeCoordinates | None = None,
+    transport: Transport | None = None,
     poll_interval_ms: int = RECONNECT_POLL_INTERVAL_MS,
 ) -> AgentCoreBridge:
     """Mint one remote session's coordinates and return its bridge, NOT started.
@@ -800,14 +801,21 @@ def prepare_remote_session(
     Fails CLOSED on an absent or incomplete keystone leaf, by raising
     :class:`BridgeUnconfigured` out of :func:`load_runtime_coordinates`: a session that
     cannot name its runtime must not fall back to one nobody chose.
+
+    *transport* exists for one purpose: an end-to-end test drives the whole path -- a
+    real shim subprocess, this bridge, a scripted worker -- and the only piece it cannot
+    have is the AWS call. Supplying one skips the keystone read too, because coordinates
+    are the argument the production transport needs and nothing else here reads them.
     """
     from kiro_crew.config.loader import config_dir
 
-    coords = coordinates if coordinates is not None else load_runtime_coordinates()
+    if transport is None:
+        coords = coordinates if coordinates is not None else load_runtime_coordinates()
+        transport = AgentCoreTransport(coords)
     root = socket_root if socket_root is not None else config_dir() / "agentcore-sockets"
     session_id = mint_session_id()
     return AgentCoreBridge(
-        AgentCoreTransport(coords),
+        transport,
         session_id=session_id,
         owner_token=mint_owner_token(),
         socket_path=socket_path_for(session_id, root=root),
