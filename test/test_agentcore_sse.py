@@ -128,9 +128,7 @@ def test_events_completed_before_a_bad_frame_arrive_before_the_error() -> None:
     early either -- it arrives only after the error has been raised.
     """
     parser = SseParser()
-    assert parser.feed(_frame({"seq": 1}) + b"data: {oops\n\n" + _frame({"seq": 2})) == [
-        {"seq": 1}
-    ]
+    assert parser.feed(_frame({"seq": 1}) + b"data: {oops\n\n" + _frame({"seq": 2})) == [{"seq": 1}]
     with pytest.raises(SseMalformedEvent):
         parser.feed(b"")
     assert parser.feed(b"") == [{"seq": 2}]

@@ -214,9 +214,7 @@ PROJECTIONS: dict[str, McpProjection] = {
             "invoke channel rather than as stdio children, which is a delivery mechanism "
             "that does not exist and is not the bridge WP3 builds"
         ),
-        tracking=(
-            "docs/system-specs/modules/harness-onboarding.md#the-agentcore-remote-backend"
-        ),
+        tracking=("docs/system-specs/modules/harness-onboarding.md#the-agentcore-remote-backend"),
     ),
     ACP_BACKEND_KIRO: McpProjection(
         kind=ProjectionKind.NATIVE,
