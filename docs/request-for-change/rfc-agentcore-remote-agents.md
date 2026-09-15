@@ -187,7 +187,7 @@ so knowing a session id is not enough to drive it.
 | Action | Direction | Meaning |
 |---|---|---|
 | `start` | client → worker | Clone the repo, drop privileges, launch the agent child, stream. |
-| `rpc` | client → worker | Deliver one JSON-RPC message to the child's stdin. Answers `{delivered: true, seq}` naming the sequence number the delivery was observed at, so a client that reconnects mid-approval can tell a delivered message from a dropped one. |
+| `rpc` | client → worker | Deliver one JSON-RPC message to the child's stdin. Answers the `actionResult` shape `{action, delivered, seq, reason}`, where `seq` names the sequence number the delivery was observed at, so a client that reconnects mid-approval can tell a delivered message from a dropped one. A FAILED delivery answers **HTTP 409** with the same shape — including a malformed `message`, which is a failed delivery rather than a bad request — and `seq` is `0` when the hub is closed, so a client is never handed somebody else's event's number. |
 | `attach` | client → worker | Read-only replay of everything after `sinceSeq`, then end. |
 | `stop` | client → worker | Cancel the turn, then terminate the child. |
 
@@ -208,11 +208,29 @@ behind an idle timeout would buy multi-turn continuation at the price of paid id
 time; it is deferred, not rejected, and nothing in the contract forbids adding it
 later.
 
-A **rejected action never opens a stream it is about to abandon.** A short session
-id, an unknown session, a wrong owner token or a breached concurrency cap answer an
-HTTP status (400, 403, 404, 409, 429) carrying the single result shape. The
-reference implementation half-opened an event stream and wrote a fatal `error` into
-it; a client then has to parse a stream to learn it was refused.
+A **rejected action never opens a stream it is about to abandon.** Every rejection
+answers an HTTP status carrying the same `actionResult` shape as `rpc`, with the
+cause in `reason`; the one exception is an unknown *route*, which answers
+`{"error": "Not found"}`. The reference implementation half-opened an event stream
+and wrote a fatal `error` into it; a client then has to parse a stream to learn it
+was refused. The mapping is not a set of unordered possibilities — each status has
+exactly one meaning:
+
+| Status | Cause |
+|---|---|
+| 400 | A session id shorter than 33 characters, an unparsable JSON body, or an unknown `action` value |
+| 403 | Owner-token mismatch |
+| 404 | Unknown session on any action except `start`, or an unknown route |
+| 409 | `start` on a session that already exists, or an `rpc` that was not delivered |
+| 429 | The concurrency cap |
+
+Two envelope details a client cannot infer: the session id is read from the
+`X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` header FIRST and from the body's
+`runtimeSessionId` only as a fallback, while the owner token is read from the body
+alone — there is no owner-token header, so a token presented in one is not
+authentication. A request with no `action` at all is treated as a `start`, and an
+unknown `action` is rejected only after the session lookup and the owner check, so
+an unknown action on an unknown session answers 404 rather than 400.
 
 Four rules the reference implementation leaves implicit and this one states:
 
@@ -231,8 +249,11 @@ Four rules the reference implementation leaves implicit and this one states:
   arrive inside `acp` messages; a client that sums both double-counts.
 
 History is bounded and announces its own gap with `history_gap` when it prunes, so
-a client never silently believes it saw the whole transcript. Terminal events are
-never pruned.
+a client never silently believes it saw the whole transcript. The client MUST advance
+its rendered watermark to the announcement's `throughSeq` and MUST NOT treat the
+resulting numeric discontinuity as a fault — without that, the same gap is
+re-reported on every subsequent poll. `maxHistory` has a floor of 16 events, so a
+smaller bound cannot be requested. Terminal events are never pruned.
 
 The agent child negotiates its own protocol version and it need not match what a
 local Kiro Crew session negotiates — Spike C saw an integer where the local client
@@ -240,10 +261,21 @@ sends a date string. The worker forwards `initialize` rather than asserting a
 version.
 
 **Resumability.** A stream that ends or throws *without* a terminal event is a
-transport drop, not a dead agent. The bridge marks the run reconnecting and polls
-`attach(sinceSeq)` until a terminal event arrives; only a fatal error ends the
-loop. This is how the streaming ceiling is handled — no timeout is tuned, and no
-event is lost or replayed twice.
+transport drop, not a dead agent. There is exactly ONE resume path, and it is not
+the one an earlier revision of this document implied: `start` on an existing session
+answers 409 unconditionally, with no `sinceSeq` resume through it, so a dropped live
+stream is never recovered as a live stream. The bridge marks the run reconnecting
+and polls `attach(sinceSeq)` until a terminal event arrives or `attach_end` reports
+`live: false` — the second condition matters, because a session whose terminal event
+was pruned would otherwise be polled forever. This is how the streaming ceiling is
+handled: no timeout is tuned.
+
+Two consequences worth stating plainly rather than discovering. A turn that drops
+early is observed at poll-interval granularity for its whole remainder, so the
+degraded path is materially slower than the live one. And **events can be delivered
+more than once** — see the deduplication rule above; the worker guarantees
+monotonicity and gap announcement, not single delivery, so the client's watermark is
+what makes a resume clean.
 
 The poll interval is a declared constant, not an implementation detail, because it
 sets the worst-case latency of a tool approval: an approval answered on a live

@@ -202,6 +202,54 @@ present the session's owner token. That is a security property of
 `kiro_crew/agentcore/stdio_shim.py`, pinned by `test_agentcore_stdio_shim.py`, not a
 harness-parity invariant.
 
+### The bridge behind the socket
+
+`kiro_crew/agentcore/bridge.py` is the other end of the relay's socket, and the
+division of labour is the point: the shim BINDS and listens, the bridge DIALS and
+presents the owner token as one newline-terminated line. That order is not
+arbitrary — the shim owns the node's permissions (it binds under `umask(0o077)` and
+closes its listener after exactly one accept) and the bridge owns the coordinates it
+minted, so neither derives what the other chose. A dial that fails with ENOENT is
+therefore expected while `AcpClient` is still starting the relay, and retried; the
+bridge is the side that carries the retry because the shim has no dial-out path at
+all.
+
+Three behaviours are the bridge's alone, and each is a client obligation the worker
+does not discharge:
+
+- **The sequence watermark.** The worker guarantees monotonicity and gap
+  announcement, never single delivery, so duplicate suppression lives here. A
+  replayed event at or below the watermark is dropped silently; a `history_gap`
+  ADVANCES the watermark to its `throughSeq`; `attach_end` never advances it,
+  because it describes one attach rather than the session.
+- **One resume path.** `start` answers 409 on an existing session, so a dropped
+  stream is recovered by polling the read-only `attach` action and never as a live
+  stream again. The loop ends on a terminal event or on `attach_end.live == false`,
+  the second because a session whose terminal event was pruned would otherwise be
+  polled forever.
+- **Delivery is not assumed.** A failed `rpc` answers 409 and an unparsable answer
+  counts as undelivered; both queue the message for re-send after the next
+  re-attach, which is safe because a JSON-RPC id is idempotent at the child.
+
+Two constraints a reader should not have to rediscover. The AWS SDK is imported
+INSIDE the method that needs it, so a public install without the `agentcore` extra
+never imports boto3 — pinned in a subprocess with the import blocked, the same
+pattern `test_approval_chain_no_cryptography.py` uses. And the relay's socket path is
+bounded: `sockaddr_un.sun_path` is 104 bytes on macOS, so the filename carries a
+16-character slug of the session id rather than the whole 41-character id and
+`socket_path_for` refuses a path over the limit with a message naming it. Overrunning
+it otherwise surfaces as `OSError: AF_UNIX path too long` from inside asyncio at spawn
+time, which names neither the cause nor the fix.
+
+Liveness is `kiro_crew/agentcore/liveness.py` and answers a different question from
+the local one on purpose. The relay's pid exists, and handing it to the CPU-sampling
+oracle would be wrong twice: a byte relay's CPU is flat while the agent is at its
+busiest, which reads as wedged, and it stays alive after the container is gone, which
+reads as healthy. So silence against the worker's own keepalive interval is the
+observable, `runtime_info()` answers `(None, None)`, and the existing oracle's
+`check_model_wait(None)` already returns `unknown` rather than `dead` — no change was
+needed there, which is why this is a declaration rather than a subsystem.
+
 ## Adding or changing an invariant
 
 1. Write the test first: an invariant is its test, and this table is the index.
