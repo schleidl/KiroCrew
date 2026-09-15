@@ -801,6 +801,14 @@ class RunEventCoordinator(ManagerComponent):
             extra_kwargs["allowed_tools"] = info.allowed_tools
         if info.cwd:
             extra_kwargs["cwd"] = info.cwd
+        # The per-session executor override rides the SAME opaque pass-through
+        # ``model`` and ``reasoning_effort`` already ride: ``get_or_create`` forwards
+        # ``**extra_factory_kwargs`` verbatim into the provider factory, so no new
+        # plumbing sits between here and the one selection gate. An empty executor
+        # omits the kwarg entirely, which is what keeps an ordinary spawn
+        # byte-identical to today (harness-parity H13).
+        if info.executor:
+            extra_kwargs["executor"] = info.executor
 
         # ── Session sharing: reuse parent's shared AcpRuntime ──
         # When enabled and eligible, subagents get a session on the parent's
@@ -826,6 +834,17 @@ class RunEventCoordinator(ManagerComponent):
         # get_or_create -> the provider factory; otherwise a configured sub-agent
         # model/effort would silently no-op on the default (session-sharing) path.
         if eff_model or eff_effort:
+            use_session_sharing = False
+        # Same reasoning, stronger, and it is FORCED rather than merely arrived at.
+        # ``is_session_sharing_eligible`` returning false for the executor's harness and
+        # the shared-runtime branch's type check for the local provider both push a
+        # remote session onto the dedicated arm -- but relying on that is a bug rather
+        # than an economy: an executor passed to a session-sharing-ELIGIBLE spawn is
+        # otherwise silently ignored, and the run comes up on the parent's harness with
+        # nothing red to say so. A wrong answer, not an error. Not a second selection
+        # gate either: this selects which ARM runs, and only the dedicated arm calls the
+        # factory where the one gate lives.
+        if info.executor:
             use_session_sharing = False
         if use_session_sharing:
             try:

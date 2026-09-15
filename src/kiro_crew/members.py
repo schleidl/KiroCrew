@@ -151,13 +151,25 @@ def select_provider_backend(
     session_key: str | None,
     member_backend: str,
     configured_default: str,
+    executor: str | None = None,
 ) -> str:
     """The per-session half of the ONE backend-selection gate (H3/H13).
 
-    Precedence: the member-DM auto-route, then the configured default. The
-    member arm goes through :func:`resolve_selected_backend` — the same
-    governance/selectability gate the persisted field crosses, so a denied or
-    unknown value degrades to kiro and the member thread runs as plain chat.
+    Precedence: an explicit per-session ``executor`` override, then the member-DM
+    auto-route, then the configured default. EVERY arm above the default goes
+    through :func:`resolve_selected_backend` — the same governance/selectability
+    gate the persisted field crosses, so a denied or unknown value degrades to
+    kiro rather than reaching provider construction.
+
+    ``executor`` is a per-session VALUE carried on an existing kwarg
+    pass-through, not a second gate: it changes what this one gate is asked
+    about, never how many gates the answer crosses. The explicit override
+    outranks the member-DM auto-route because one is a caller's stated intent
+    and the other an inference. An empty or ``None`` executor is not a decision,
+    so it falls through untouched and the Kiro path resolves exactly as before —
+    which is what keeps H13 intact (no new required argument, no new failure
+    mode on the Kiro construction path) and what H1 requires of an operator who
+    asked for nothing.
 
     Lives here rather than inline in ``create_provider_factory`` so the
     factory body stays a single selection CALL with no branching of its own:
@@ -166,6 +178,15 @@ def select_provider_backend(
     """
     from kiro_crew.acp_backends import resolve_selected_backend
 
+    if executor:
+        backend = resolve_selected_backend(executor)
+        logger.info(
+            "session %s: executor override routing to acp_backend=%r (executor=%r)",
+            session_key,
+            backend,
+            executor,
+        )
+        return backend
     if is_member_session_key(session_key):
         backend = resolve_selected_backend(member_backend)
         logger.info(

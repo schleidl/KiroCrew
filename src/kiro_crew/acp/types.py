@@ -14,6 +14,7 @@ from typing import Any
 # existing ``from kiro_crew.acp.types import ACP_BACKEND_*`` call site is
 # unchanged — see the "ACP Backend Identifiers" section below for why they moved.
 from kiro_crew.acp_backends import (  # noqa: F401 - re-exported for existing importers
+    ACP_BACKEND_AGENTCORE,
     ACP_BACKEND_CLAUDE,
     ACP_BACKEND_CODEX,
     ACP_BACKEND_KAS,
@@ -196,6 +197,12 @@ PROVIDER_LABEL_KAS = "kas"
 PROVIDER_LABEL_CODEX = "codex"
 PROVIDER_LABEL_OPENCODE = "opencode"
 PROVIDER_LABEL_PI = "pi"
+# A label of its own because an ABSENT label means kiro-cli (harness-parity H11).
+# The remote child IS kiro-cli, which makes the temptation to reuse the kiro label
+# concrete and wrong: the label indexes session-map persistence and session-file
+# cleanup, and a remote session has no local kiro transcript, so it would be pruned
+# for want of a file that was never written on this machine.
+PROVIDER_LABEL_AGENTCORE = "agentcore"
 
 # KAS reads only fs.readTextFile / fs.writeTextFile / terminal from the top
 # level of clientCapabilities; every other capability it honours lives under

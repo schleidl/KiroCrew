@@ -62,6 +62,7 @@ from pathlib import PurePosixPath
 from typing import Dict, FrozenSet, Protocol, Tuple, runtime_checkable
 
 from kiro_crew.agent_sdk.backends import (
+    ACP_BACKEND_AGENTCORE,
     ACP_BACKEND_CLAUDE,
     ACP_BACKEND_CODEX,
     ACP_BACKEND_KAS,
@@ -512,6 +513,45 @@ AGENT_AUTH_DECLARATIONS: Tuple[AgentAuthDeclaration, ...] = (
         # ``kiro-cli logout`` says nothing about whether a running pi session is
         # still authenticated.
         host_logout_retires_children=False,
+        entitlement_source=ENTITLEMENT_OWN_CREDENTIAL_FILE,
+    ),
+    # A declaration is REQUIRED, not optional: joining ``ACP_BACKENDS_KNOWN`` without
+    # an auth answer is exactly how a live token stayed off the credential floor once
+    # already, and the parity test in ``test_agent_sdk_host_auth.py`` fails on the gap.
+    AgentAuthDeclaration(
+        backend=ACP_BACKEND_AGENTCORE,
+        # NONE on this machine, and that is the design rather than an omission. The
+        # remote agent authenticates from a secret in the operator's own AWS account:
+        # the model credential exists in Secrets Manager and in the container's
+        # memory, never on this disk, never in a Crew config file and never in any
+        # agent's context. Declaring a local leaf would fence a file that holds no
+        # token, and would suggest a store an operator could go and inspect.
+        credential_leaves=(),
+        # Nothing relocates it, because there is nothing here to relocate.
+        home_override_env_vars=(),
+        # No mask to carve an exception out of: the id is ``Routing.AGENT_SPEC``, so it
+        # is outside ``ENFORCED_ROUTINGS`` and no credential mask is applied. The LOCAL
+        # process is a byte relay that reads no file at all.
+        adapter_own_leaves=(),
+        sign_in_remedy=(
+            "The remote agent signs in inside your own AWS account, from a secret in "
+            "Secrets Manager that the worker container reads — there is nothing to "
+            "sign in to here. Provisioning that secret and the runtime is a human "
+            "action Crew does not perform."
+        ),
+        signed_out_message=(
+            "The remote agent's credential lives in your AWS account, not on this "
+            "machine. If a remote session cannot authenticate, the secret the worker "
+            "reads is the thing to check, not a local sign-in."
+        ),
+        # False: a ``kiro-cli logout`` on this machine says nothing about a container
+        # authenticated from a secret in the operator's account, and retiring a live
+        # remote run on that signal would end a paid turn for no reason.
+        host_logout_retires_children=False,
+        # ``own_credential_file`` rather than ``host_identity_store``: the remote child
+        # IS kiro-cli, which makes the second answer tempting and wrong -- it is NOT
+        # the host identity store on this machine that entitles it, and reading it that
+        # way would tie a remote session's entitlement to a local sign-in it never uses.
         entitlement_source=ENTITLEMENT_OWN_CREDENTIAL_FILE,
     ),
 )

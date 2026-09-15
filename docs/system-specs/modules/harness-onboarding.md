@@ -418,3 +418,61 @@ the probe name would otherwise make an absent gate read as present. Expect this
 too: a harness that offers less than the ones before it does not fit a weaker
 version of an existing member, it needs a member that says what is actually
 established.
+
+## The agentcore remote backend
+
+`ACP_BACKEND_AGENTCORE = "agentcore"` is the first host that does not run on the
+operator's machine. The agent is a `kiro-cli acp` child inside a Bedrock AgentCore
+Runtime microVM in the operator's own account; the local argv is
+`kiro_crew.agentcore.stdio_shim`, a byte relay whose stdin and stdout are the pipes
+`AcpClient` already writes to and whose other end is one UNIX socket to a bridge in
+the gateway process. The design is
+[rfc-agentcore-remote-agents.md](../../request-for-change/rfc-agentcore-remote-agents.md).
+
+Named here for the reason this document names any host: it is `no-channel` in
+`PROJECTIONS`, and a no-channel harness has to state what would have to exist for
+that to change. Crew's MCP servers are local stdio children of the gateway, and the
+agent is in another account, so nothing carries them across — a `session/new`
+`mcpServers` array would arrive naming commands that exist on the operator's machine
+and not in the container, and the servers that came up would be the container's own
+processes wearing Crew's names. The remote agent's tools are the ones its own agent
+spec declares, baked into the worker image. What would change the kind is Crew's
+control plane reachable from inside the container over the invoke channel rather
+than as a stdio child. That is a delivery mechanism that does not exist, and it is
+not the bridge WP3 builds.
+
+Two answers here differ in shape from every earlier host, and both are worth
+carrying forward.
+
+**Stage 7 is the first real use of `NOT_SHIPPED_SELECTABLE`.** The allowlist had been
+empty since it was written, and the healthy reading of that was "every id this core
+can spell, an operator can choose". This id cannot be, and the reason is not
+"unfinished": selectability needs the `kirocrew[agentcore]` extra, which is what puts
+a bridge behind the shim's socket, and the `capabilities.remote_exec` governance
+scope, whose capability default is false. Offering the switch would render an option
+whose every session stalls at the ACP handshake with nothing listening on the far
+end. The edition that ships the extra calls `register_selectable_backend`, so the id
+is spellable-and-unreachable on a plain build by construction rather than by a
+narrowing somewhere downstream.
+
+**Stage 5 answers "where is the credential?" with "not on this machine".** Every
+earlier harness either signed in to kiro-cli's own identity store or brought its own
+credential file, and both answers name something on the operator's disk that the
+credential floor fences. This host's model credential lives in Secrets Manager and in
+the container's memory; the declaration therefore carries no leaf at all, and
+`own_credential_file` is chosen over `host_identity_store` precisely because the
+remote child IS kiro-cli and the second answer would tie a remote session's
+entitlement to a local sign-in it never uses. The one secret-shaped value on this
+machine is the per-session owner token the shim compares against, which authorizes
+the peer on the socket and buys access to nothing else.
+
+The checklist's remaining stages are answered thinly on purpose, and each thin answer
+is a widening a later work package earns with a measured turn rather than a default
+it inherits: the handshake advertises no client capability, because every capability
+Crew advertises here is a promise about what the BRIDGE answers; the notification
+vocabulary is the standard spelling only, not the kiro family's, even though the
+remote child sends the `_kiro.dev` aliases; and the id is in no Group B capability
+set. The frame corpus is honestly marked `synthesized` — there is no container and no
+bridge at this commit, so there was no wire to record, and the corpus asserts the
+dispatch layer's classification under a registered id rather than anything about a
+remote turn.

@@ -32,7 +32,15 @@ FIELD = "agent.acp_backend"
 
 #: Known ids the public baseline deliberately does not offer, each entry carrying its
 #: reason in ``test_baseline_ships_every_known_backend``. Empty is the healthy state.
-NOT_SHIPPED_SELECTABLE: frozenset = frozenset()
+#:
+#: ``agentcore``: the remote AgentCore harness. Two preconditions a plain build does
+#: not satisfy -- the ``kirocrew[agentcore]`` extra, which is what puts a bridge behind
+#: the stdio shim's socket, and the ``capabilities.remote_exec`` governance scope,
+#: whose capability default is false. Offering the switch would render an option whose
+#: every session stalls at the ACP handshake with nothing listening on the far end of
+#: the socket, which is worse than an absent one. The edition that ships the extra
+#: calls ``register_selectable_backend`` instead.
+NOT_SHIPPED_SELECTABLE: frozenset = frozenset({acp_backends.ACP_BACKEND_AGENTCORE})
 
 
 @pytest.fixture
@@ -152,9 +160,9 @@ def test_baseline_ships_every_known_backend():
 
     ``NOT_SHIPPED_SELECTABLE`` is where that reason goes. It is an explicit list
     rather than a relaxed assertion so a plain ``baseline != known`` still fails:
-    an id may sit outside the baseline only by being named there. It is empty
-    today — every known id is offered, so a switch that renders always has an
-    install probe behind it to explain a session that failed to start.
+    an id may sit outside the baseline only by being named there. It holds one id
+    today — ``agentcore``, whose switch would render ahead of the bridge that
+    answers for it, with the reason next to the entry.
     """
     baseline: List[str] = sorted(acp_backends.BASELINE_SELECTABLE_BACKENDS)
     assert baseline == sorted(

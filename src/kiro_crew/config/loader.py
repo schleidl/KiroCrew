@@ -5173,6 +5173,12 @@ class KiroCrewConfig:
             extra_env: dict[str, str] | None = None,
             reasoning_effort_override: str | None = None,
             crew_agent: str | None = None,
+            # A per-session executor override: the harness THIS session is served by.
+            # Optional and defaulting to None, so the Kiro construction path gains no
+            # new required argument and no new failure mode (harness-parity H13); it
+            # was already being accepted silently by ``**_kwargs`` before this line
+            # existed, so naming it adds a parameter and no plumbing.
+            executor: str | None = None,
             **_kwargs: object,
         ) -> AcpProvider:
             wdir = Path(cwd) if cwd else _session_work_dir(session_key)
@@ -5266,6 +5272,7 @@ class KiroCrewConfig:
                 session_key,
                 self.agent.member_acp_backend,
                 self.agent.acp_backend,
+                executor,
             )
             return AcpProvider(
                 work_dir=wdir,

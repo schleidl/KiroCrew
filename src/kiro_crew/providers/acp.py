@@ -25,6 +25,7 @@ from kiro_crew.acp.runtime import AcpRuntime, AcpRuntimeError
 from kiro_crew.acp.session_handle import AcpSessionHandle
 from kiro_crew.acp.session_provider import AcpSessionProvider
 from kiro_crew.acp.types import (
+    ACP_BACKEND_AGENTCORE,
     ACP_BACKEND_CODEX,
     ACP_BACKEND_KAS,
     ACP_BACKEND_KIRO,
@@ -38,6 +39,7 @@ from kiro_crew.acp.types import (
     ACP_BACKENDS_MEMBER_CAPABILITIES,
     ACP_BACKENDS_SESSION_SHARING,
     EVENT_COMPACTION_STATUS,
+    PROVIDER_LABEL_AGENTCORE,
     PROVIDER_LABEL_CLAUDE,
     PROVIDER_LABEL_CODEX,
     PROVIDER_LABEL_DEFAULT,
@@ -562,6 +564,21 @@ class AcpProvider(LLMProvider):
     def is_kas_backend(self) -> bool:
         """True when this ACP provider talks to KAS (kiro-agent)."""
         return self._client.backend == ACP_BACKEND_KAS
+
+    @property
+    def is_agentcore_backend(self) -> bool:
+        """True when this ACP provider talks to a remote AgentCore agent.
+
+        A predicate of its own because ``is_kiro_backend`` is a POSITIVE test against
+        ``ACP_BACKEND_KIRO`` -- the empty string -- and exactly one predicate must hold
+        for any backend (harness-parity H5/H8). Without this the remote id answers
+        False to every one of them, and the site asking "which harness is this?" has no
+        true answer to fall back on. Note what it must NOT become: the remote child is
+        kiro-cli, so answering True to ``is_kiro_backend`` here would look reasonable
+        and would hand a remote session every local-process assumption Kiro's path
+        carries.
+        """
+        return self._client.backend == ACP_BACKEND_AGENTCORE
 
     @property
     def defer_replay_sid_promotion(self) -> bool:
@@ -2025,6 +2042,10 @@ def provider_label(provider: Any) -> str:
         return PROVIDER_LABEL_KAS
     if backend == ACP_BACKEND_CODEX:
         return PROVIDER_LABEL_CODEX
+    # Positive comparison against the named constant, never an inequality or a bare
+    # literal (harness-parity H5/H8).
+    if backend == ACP_BACKEND_AGENTCORE:
+        return PROVIDER_LABEL_AGENTCORE
     if backend == ACP_BACKEND_OPENCODE:
         return PROVIDER_LABEL_OPENCODE
     if backend == ACP_BACKEND_PI:

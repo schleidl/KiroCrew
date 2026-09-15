@@ -181,6 +181,17 @@ ACP_BACKEND_PI = "pi"
 # rather than leaving every call site to infer it from "not claude".
 ACP_BACKEND_KIRO = ""
 
+# AgentCore remote agents: a ``kiro-cli acp`` child running inside a Bedrock
+# AgentCore Runtime microVM in the operator's own account. Locally there is no
+# binary to spawn -- the harness's argv launches the stdio shim
+# (``kiro_crew.agentcore.stdio_shim``), which relays newline-framed JSON-RPC over one
+# UNIX socket to the bridge in the gateway process (RFC phase 3). Registered here
+# because the id has to be SPELLABLE for the one selection gate to resolve it, and
+# deliberately NOT in :data:`BASELINE_SELECTABLE_BACKENDS`: selectability needs the
+# ``kirocrew[agentcore]`` extra and the ``capabilities.remote_exec`` scope, so on a
+# plain build this id is spellable and unreachable.
+ACP_BACKEND_AGENTCORE = "agentcore"
+
 # Membership gate for the ``acp_backend`` kwarg. An unrecognized value would
 # otherwise fall through every ``_is_<backend>`` check and silently spawn
 # kiro-cli, so provider construction rejects it instead.
@@ -192,6 +203,7 @@ ACP_BACKENDS_KNOWN: FrozenSet[str] = frozenset(
         ACP_BACKEND_CODEX,
         ACP_BACKEND_OPENCODE,
         ACP_BACKEND_PI,
+        ACP_BACKEND_AGENTCORE,
     }
 )
 
@@ -328,6 +340,18 @@ BASELINE_SELECTABLE_BACKENDS: FrozenSet[str] = frozenset(
         ACP_BACKEND_PI,
     }
 )
+# ``ACP_BACKEND_AGENTCORE`` is deliberately ABSENT above, and that absence is the
+# one documented NARROWING this set carries (``NOT_SHIPPED_SELECTABLE`` in
+# ``test_agent_backend_editable.py`` names it with this reason). Two preconditions
+# neither of which a plain build satisfies: the ``kirocrew[agentcore]`` extra, which
+# is what puts a bridge behind the shim's socket, and the
+# ``capabilities.remote_exec`` governance scope, whose capability default is false.
+# Offering the switch here would put a harness on the dashboard whose every session
+# stalls at the handshake with nothing listening on the other end of the socket --
+# the "an option that cannot start a session" state ``register_selectable_backend``
+# exists to prevent. The edition that ships the extra calls
+# :func:`register_selectable_backend` instead, which is the one seam that makes it
+# reachable.
 
 # ── Policy-facing spelling ──
 # A governance rule is written by a human into ``security_policy.json`` and is
@@ -349,6 +373,10 @@ POLICY_ID_BY_BACKEND: dict = {
     ACP_BACKEND_CODEX: ACP_BACKEND_CODEX,
     ACP_BACKEND_OPENCODE: ACP_BACKEND_OPENCODE,
     ACP_BACKEND_PI: ACP_BACKEND_PI,
+    # Nameable in a deployment rule even though a plain build cannot select it: an
+    # operator whose edition DID register it needs a way to deny it again, and a
+    # policy author has to be able to write the rule before the extra is installed.
+    ACP_BACKEND_AGENTCORE: ACP_BACKEND_AGENTCORE,
 }
 
 #: The backend a deployment policy may never deny.
@@ -983,6 +1011,12 @@ _MODEL_REGISTRY_NAMESPACE_BY_BACKEND: dict = {
     ACP_BACKEND_OPENCODE: "opencode",
     # pi likewise: ``provider/model`` pairs from the operator's own models.json.
     ACP_BACKEND_PI: "pi",
+    # Its own key rather than sharing kiro's ``acp`` bucket. The remote child IS
+    # kiro-cli, so the ids it advertises are the same spelling -- but the ENTITLEMENT
+    # behind them is the container's credential, not the operator's, so a remote
+    # session's advertised set is not a statement about what the local install may
+    # run. Folding the two would let one overwrite the other's picker.
+    ACP_BACKEND_AGENTCORE: "agentcore",
 }
 
 
@@ -1132,6 +1166,98 @@ ACP_BACKENDS_HARNESS_OWNED_SESSIONS = frozenset(
 ACP_BACKENDS_LOAD_WITHOUT_MODES = frozenset({ACP_BACKEND_OPENCODE})
 
 
+# ── ACP_BACKEND_AGENTCORE's capability decisions, one line per set ──
+#
+# harness-parity's "adding a harness" checklist requires an EXPLICIT decision for
+# every Group B membership set, and "inherited the default" is not a decision. The
+# answer for the remote host is NON-MEMBERSHIP in every one of them, recorded as one
+# block because the reason is nearly always the same reason: the remote child is
+# kiro-cli, so it would ANSWER most of these -- but the channel between Crew and it
+# is one socket carrying raw JSON-RPC through a single-turn worker session, and a
+# capability Crew claims here is a capability Crew asserts about the BRIDGE, which
+# WP3 has not built. Each of these is a widening a later work package earns with
+# evidence, never a default it inherits.
+#
+#   ACP_BACKENDS_SESSION_MCP_ARRAY          -- no: the container's own agent spec
+#                                              carries its servers; Crew projects
+#                                              nothing over the socket (PROJECTIONS
+#                                              declares NO_CHANNEL to match).
+#   ACP_BACKENDS_PRIVATE_MEMORY_MCP         -- no: a memory MCP launched remotely
+#                                              would reach the container's fs.
+#   ACP_BACKENDS_SESSION_SHARING            -- no, and load-bearing: the dedicated
+#                                              arm is the only arm that reaches the
+#                                              provider factory where the one
+#                                              selection gate lives. Also forced
+#                                              explicitly at the spawn -- see
+#                                              ``subagent_manager/run.py``.
+#   ACP_BACKENDS_MEMBER_DISPATCH            -- no: no per-session tool mount.
+#   ACP_BACKENDS_STEER                      -- no. Steer is a GOAL of the RFC and it
+#                                              arrives through the worker's ``rpc``
+#                                              action in WP3, not through
+#                                              ``_session/steer`` on this transport;
+#                                              advertising it now answers a mid-turn
+#                                              correction with -32601.
+#   ACP_BACKENDS_COMPACT                    -- no: the worker session is SINGLE-TURN
+#   ACP_BACKENDS_INLINE_COMPACTION             and the child is terminated at
+#                                              ``turn_end``, so there is no session
+#                                              left to compact and a manual
+#                                              /compact must be refused up front
+#                                              rather than strand the status waiter.
+#   ACP_BACKENDS_INTERNAL_SANDBOX           -- no. The container drops privileges to
+#                                              a non-root uid, but this set governs
+#                                              whether CREW's own OS wrap is skipped
+#                                              for the LOCAL argv, and the local argv
+#                                              is the shim: a byte relay Crew wraps
+#                                              like any other child. Membership fails
+#                                              OPEN, so it is never claimed on a
+#                                              guarantee that lives on another host.
+#   ACP_BACKENDS_POD_HOME_REMAP             -- no: no $HOME-derived grant store here;
+#                                              the shim reads no credential at all.
+#   ACP_BACKENDS_ACP_RUNTIME                -- no: one shim process per session, so it
+#                                              takes the ``AcpClient`` arm. A single
+#                                              worker session is single-turn, so
+#                                              there is no second session to demux.
+#   ACP_BACKENDS_MODEL_VIA_CONFIG_OPTION    -- no: the model is the container's, pinned
+#   ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION      in the worker's own argv, and no
+#   ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS         ``model``/``effort`` select is advertised
+#   ACP_BACKENDS_ADVERTISED_MODEL_SELECTION    across this transport today.
+#   ACP_BACKENDS_SEED_LOCAL_SETTINGS        -- no: Crew writes no file for this host.
+#                                              The shim's own launch takes no settings.
+#   ACP_BACKENDS_KIRO_SLASH_COMMANDS        -- no. The remote child WOULD answer
+#                                              ``_kiro.dev/commands/execute``, and the
+#                                              set also decides who gets a workspace
+#                                              ``cli.json`` overlay written for them --
+#                                              a file written next to the operator's
+#                                              LOCAL tree for a session that runs
+#                                              elsewhere and never reads it, which no
+#                                              later clear could reach. Membership is
+#                                              WP3's to earn with a measured turn.
+#   ACP_BACKENDS_MCP_CONFIG_HOT_RELOAD      -- no: the dashboard must NOT skip its
+#                                              session reset for a host whose spec
+#                                              lives in a container image.
+#   ACP_BACKENDS_SIDE_READONLY              -- no: the allowance rests on the derived
+#                                              local ``<agent>--readonly`` spec, so a
+#                                              side turn here runs REJECT_ALL.
+#   ACP_BACKENDS_STRUCTURED_REFUSAL         -- no: no reason payload is carried.
+#   ACP_BACKENDS_HOST_AUTH_CALLBACK         -- no, and this one is a SECURITY decision
+#                                              rather than an unmeasured capability.
+#                                              The remote agent authenticates from a
+#                                              secret in its own account; Crew must
+#                                              never answer a credential callback
+#                                              arriving over this socket, because the
+#                                              peer on the other end is a bridge, not
+#                                              a process Crew spawned and trusts.
+#   ACP_BACKENDS_HARNESS_OWNED_SESSIONS     -- no: the worker keeps its own records,
+#                                              but a single-turn session is gone at
+#                                              ``done``, so Crew must not treat a
+#                                              remote session id as resumable.
+#   ACP_BACKENDS_LOAD_WITHOUT_MODES         -- no: nothing loads a remote session.
+#
+# ``effort_config_option_id`` and ``EFFORT_CONFIG_OPTION_IDS`` need no row: the id is
+# outside ``ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION``, so the resolver is never
+# consulted for it and the default spelling stays inert.
+
+
 # ── How a harness is made to ask ──
 # Kiro Crew's PreToolUse gate -- the bundled denied-command rules, the
 # sensitive-path block, the governance ceiling -- runs from exactly ONE place,
@@ -1225,6 +1351,31 @@ ACP_BACKEND_ROUTING: dict = {
     ACP_BACKEND_CODEX: Routing.SESSION_CONFIG,
     ACP_BACKEND_OPENCODE: Routing.VERIFIED_SEEDED_SETTINGS,
     ACP_BACKEND_PI: Routing.VERIFIED_GATE_EXTENSION,
+    # ``AGENT_SPEC``, and the elimination is recorded because the RFC's first
+    # revision got it wrong in both halves ("a session-config-or-stronger member,
+    # because an unlisted id resolves unverified"):
+    #
+    #   UNVERIFIED               -- not available. ``test_no_host_is_left_unverified``
+    #                               parametrises over every entry in this table, so
+    #                               "we do not know" is a value a CALLER handles for
+    #                               an unregistered id, never a state a REGISTERED
+    #                               host may rest in.
+    #   SESSION_CONFIG           -- each obliges a credential mask on the spawn plan
+    #   VERIFIED_SEEDED_SETTINGS    plus a sandbox-tier consult, and the two ENFORCED
+    #   SEEDED_SETTINGS             members additionally oblige a credential leaf in
+    #                               ``ADAPTER_OWN_CREDENTIAL_LEAVES`` and a dedicated
+    #                               ``_sandbox_preflight`` arm inside
+    #                               ``AcpClient._spawn``. All of that would be
+    #                               asserted about a LOCAL process that is a byte
+    #                               relay holding no credential.
+    #
+    # ``AGENT_SPEC`` is the member whose guarantee is literally true here: the remote
+    # agent is ``kiro-cli --agent <name>`` inside the container, so it asks by exactly
+    # the mechanism the local Kiro path uses -- the agent spec its own privileged
+    # tools read. Nothing about that is weakened by the trip over the socket: the
+    # spec is materialized in the container by the worker, and the tool calls that
+    # reach Crew's gate are the same ``session/request_permission`` frames.
+    ACP_BACKEND_AGENTCORE: Routing.AGENT_SPEC,
 }
 
 
