@@ -71,14 +71,37 @@ def test_intent_alone_does_not_make_it_selectable(monkeypatch: pytest.MonkeyPatc
 
     Asking for a harness cannot conjure the runtime that answers for it, and a switch
     offered without one is exactly the stalling session the narrowing forbids.
+
+    The absent runtime is spelled as the RAISE the loader actually performs, not as a
+    ``None`` return: it fails closed and has no sentinel, so a test that stubbed one
+    would prove a branch reality never takes.
     """
     monkeypatch.setenv(acp_backends.ENV_AGENTCORE_PREVIEW, "1")
     import kiro_crew.agentcore.bridge as bridge
 
-    monkeypatch.setattr(bridge, "load_runtime_coordinates", lambda: None)
+    def _unconfigured() -> None:
+        raise bridge.BridgeUnconfigured("no remote runtime is configured")
+
+    monkeypatch.setattr(bridge, "load_runtime_coordinates", _unconfigured)
 
     assert acp_backends.agentcore_preview_requested(), "intent is there"
     assert not defaults.agentcore_selectable_here(), "but a runtime is not"
+
+
+def test_the_loader_really_raises_rather_than_returning_a_sentinel() -> None:
+    """Pins the contract the probe above depends on.
+
+    If the loader ever started returning ``None`` for an absent runtime, the probe's
+    ``except`` would stop being the path that catches it and this file's stubs would
+    quietly diverge from production behaviour.
+    """
+    import inspect
+
+    import kiro_crew.agentcore.bridge as bridge
+
+    source = inspect.getsource(bridge.load_runtime_coordinates)
+    assert "raise BridgeUnconfigured" in source
+    assert "return None" not in source
 
 
 def test_a_runtime_alone_does_not_make_it_selectable(

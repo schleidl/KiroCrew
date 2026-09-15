@@ -80,16 +80,21 @@ def agentcore_selectable_here() -> bool:
     still wins over anything decided here. This function answers only "could a session
     physically start", which is the question the narrowing actually asks.
 
-    Fail-closed on a broken runtime file: ``load_runtime_coordinates`` raises rather
-    than returning a default, and an install whose coordinates do not parse is exactly
-    the stalling dashboard switch, so the refusal is the right answer, not a fallback.
+    The runtime probe is a CALL, not a truthiness test: ``load_runtime_coordinates``
+    fails closed by RAISING (``BridgeUnconfigured`` for absent, unreadable, or
+    incomplete) and never returns a sentinel, so returning normally is the whole signal.
+    Every raise lands in the same refusal, which is right -- an install whose
+    coordinates do not resolve is exactly the stalling dashboard switch, so refusing is
+    the answer rather than a fallback -- and it logs, because an operator who set the
+    flag and sees no option otherwise has nothing to go on.
     """
     if not acp_backends.agentcore_preview_requested():
         return False
     try:
         from kiro_crew.agentcore.bridge import load_runtime_coordinates
 
-        return load_runtime_coordinates() is not None
+        load_runtime_coordinates()
+        return True
     except Exception:
         logger.info(
             "agentcore preview requested but no usable runtime is configured; "
