@@ -78,17 +78,17 @@ deployed and WP2 through WP4 are merged.
 Throwaway branch `spike/agentcore-probe`. Output is three verdict files plus, for
 (b), a passing test in the worktree.
 
-- [ ] **Spike A — headless agent in the container.** Build the arm64 image with
+- [x] **Spike A — headless agent in the container.** Build the arm64 image with
   `kiro-cli` and an API key from Secrets Manager; run one turn that reads a file
   and calls a tool; capture the ACP JSON lines and the per-turn credit report.
   Verdict: does a headless agent complete a turn in a microVM.
-- [ ] **Spike B — per-session executor override.** Establish whether an
+- [x] **Spike B — per-session executor override.** Establish whether an
   `executor` value can reach backend selection through the single existing gate
   without adding a second one, proven by a test, not by reading.
-- [ ] **Spike C — bidirectional JSON-RPC and resumability.** Round-trip a
+- [x] **Spike C — bidirectional JSON-RPC and resumability.** Round-trip a
   permission request over invoke plus SSE, then kill the stream mid-turn and
   resume with `attach(sinceSeq)`; assert no lost and no duplicated message.
-- [ ] **Record the verdicts** in the RFC's open questions section. A failed
+- [x] **Record the verdicts** in the RFC's open questions section. A failed
   Spike B switches WP4 to the dedicated-agent-configuration fallback.
 
 ## WP1: worker container and account resources
@@ -127,11 +127,11 @@ Branch `feat/agentcore-worker`.
 
 Branch `feat/agentcore-backend`.
 
-- [ ] **Step 1: Write the failing tests.** The new backend resolves through the
+- [x] **Step 1: Write the failing tests.** The new backend resolves through the
   single gate; the tool gate does not refuse it; the keystone disposition pin
   covers the new leaf; spawn admission refuses when the scope is off.
-- [ ] **Step 2: Verify red.**
-- [ ] **Step 3: Register the backend.** Fourteen sites, each pinned by a loud test,
+- [x] **Step 2: Verify red.**
+- [x] **Step 3: Register the backend.** Fourteen sites, each pinned by a loud test,
   as Spike B measured: constant and known set, policy id, routing member (use
   `AGENT_SPEC` — every stronger member obliges a credential mask, a sandbox-tier
   consult and its own spawn preflight arm), provider label, model namespace, install
@@ -141,32 +141,32 @@ Branch `feat/agentcore-backend`.
   capability set. Not selectable on a baseline build. Declare session sharing
   ineligible **and force the dedicated arm explicitly**, or an executor on a
   sharing-eligible spawn is silently ignored.
-- [ ] **Step 4: Add the shim.** A minimal stdio-to-socket relay with no
+- [x] **Step 4: Add the shim.** A minimal stdio-to-socket relay with no
   credential and no second connection.
-- [ ] **Step 5: Keystone and governance.** The runtime-coordinates leaf with its
+- [x] **Step 5: Keystone and governance.** The runtime-coordinates leaf with its
   disposition, and the `capabilities.remote_exec` catalog row enforced
   fail-closed and audited at admission.
-- [ ] **Step 6: Answer every harness-parity invariant** in the parity spec, and
+- [x] **Step 6: Answer every harness-parity invariant** in the parity spec, and
   run the parity gate locally against the base branch.
-- [ ] **Step 7: Specs and gates.** Update the parity, governance, security and
+- [x] **Step 7: Specs and gates.** Update the parity, governance, security and
   platform-context specs, then run the full local sequence.
 
 ## WP3: the gateway bridge
 
 Branch `feat/agentcore-bridge`.
 
-- [ ] **Step 1: Build the fake worker fixture.** A local HTTP server speaking the
+- [x] **Step 1: Build the fake worker fixture.** A local HTTP server speaking the
   RFC's action and event vocabulary, able to inject a mid-turn stream drop and a
   fatal error on demand.
-- [ ] **Step 2: Write the failing tests.** Full turn; drop and gap-free resume;
+- [x] **Step 2: Write the failing tests.** Full turn; drop and gap-free resume;
   permission round-trip; stop escalation; a heartbeat gone quiet.
-- [ ] **Step 3: Implement the bridge.** Lazy AWS import behind the extra; per-session
+- [x] **Step 3: Implement the bridge.** Lazy AWS import behind the extra; per-session
   socket; invoke for `start` and `rpc`; a long-lived attach stream with a
   sequence guard and short-interval re-attach; stop escalation from cooperative
   cancel through the worker action to the platform's session stop.
-- [ ] **Step 4: Implement liveness.** No pid, a remote identifier, heartbeat-based
+- [x] **Step 4: Implement liveness.** No pid, a remote identifier, heartbeat-based
   aliveness, and session sharing declared ineligible.
-- [ ] **Step 5: Gates.** Tests, type check on the Linux platform, docs.
+- [x] **Step 5: Gates.** Tests, type check on the Linux platform, docs.
 
 ## WP4: spawn surface
 
@@ -174,11 +174,29 @@ Branch `feat/agentcore-spawn`.
 
 - [ ] **Step 1: Failing test.** A remote subagent driven by the fake worker
   produces a completion event in the parent and a local transcript file.
-- [ ] **Step 2: Add the executor argument** to the spawn tool, the spawn route,
+- [x] **Step 2: Add the executor argument** to the spawn tool, the spawn route,
   the slot-creation route and the command-line twin, with strict session-key
   resolution and audit rows.
-- [ ] **Step 3: Specs.** Subagent, MCP, session and feature-map indexes.
-- [ ] **Step 4: Gates.**
+- [x] **Step 3: Specs.** Subagent, MCP, session and feature-map indexes.
+- [x] **Step 4: Gates.**
+- [ ] **Step 5: Bridge lifecycle — the step this plan never named, and the one
+  thing still between here and a working remote agent.** WP3 built the bridge and
+  WP4 made `executor` reach the harness, but NOTHING constructs a bridge when a
+  remote spawn starts: `grep -rn "AgentCoreBridge\|serve_session" src/kiro_crew`
+  matches only `agentcore/bridge.py` itself. So a remote spawn today reaches
+  `AgentCoreHarness.resolve_spawn`, finds neither `KIROCREW_AGENTCORE_SOCKET` nor
+  `KIROCREW_AGENTCORE_OWNER_TOKEN` in the spawn environment, and raises the
+  `AcpRuntimeError` WP2 wrote for exactly this case — "no bridge is serving this
+  spawn". That is a designed, legible failure rather than a silent one, but it IS
+  the remaining gap. What it needs: for a remote executor, load the keystone
+  coordinates (`load_runtime_coordinates`), mint a session via `serve_session`,
+  merge its `spawn_env` into the child's environment BEFORE `resolve_spawn` reads
+  it, run the bridge concurrently with the ACP client, and tie its `stop()` and
+  socket teardown to the session's own teardown so a cancelled turn reclaims the
+  container. The seam is provider construction (`config/loader.py`
+  `create_provider_factory`, where the executor already arrives) rather than the
+  harness, which must stay argv-only. Until this lands, WP4 Step 1's end-to-end
+  test cannot be written, which is why it is still unchecked.
 
 ## WP5: dashboard extras
 
