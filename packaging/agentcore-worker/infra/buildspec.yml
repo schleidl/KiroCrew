@@ -1,0 +1,87 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Builds the arm64 AgentCore worker image IN THE ACCOUNT and pushes it to the ECR
+# repository created by infra/template.yaml. This is what removes the need for a
+# local container daemon and a 582 MiB local pull of the kiro-cli archive.
+#
+# Referenced by the ImageBuildProject resource in infra/template.yaml
+# (Source.BuildSpec = packaging/agentcore-worker/infra/buildspec.yml), which also
+# supplies every variable below as a project environment variable. Nothing here
+# hardcodes an account, a region or a repository: AWS_ACCOUNT_ID and
+# ECR_REPOSITORY_NAME come from the template, AWS_REGION and
+# CODEBUILD_RESOLVED_SOURCE_VERSION from CodeBuild itself.
+#
+# Each phase is self-contained - shell state (variables, working directory) is not
+# assumed to survive a phase boundary - hence the repeated derivation block.
+#
+# Run it with:
+#   aws codebuild start-build --project-name <ImageBuildProjectName> \
+#     --profile <profile> --region <region>
+
+version: 0.2
+
+env:
+  variables:
+    # Overridden by the project's environment variables; these defaults only keep
+    # a manual `start-build --environment-variables-override` honest.
+    WORKER_DIR: packaging/agentcore-worker
+    IMAGE_TAG: latest
+
+phases:
+  pre_build:
+    commands:
+      - set -euo pipefail
+      # Fail fast and legibly rather than twenty minutes into a build.
+      - test -n "${AWS_ACCOUNT_ID:-}" || { echo "AWS_ACCOUNT_ID is not set"; exit 1; }
+      - test -n "${ECR_REPOSITORY_NAME:-}" || { echo "ECR_REPOSITORY_NAME is not set"; exit 1; }
+      - test -n "${KIRO_CLI_URL:-}" || { echo "KIRO_CLI_URL is not set"; exit 1; }
+      - >-
+        test -n "${KIRO_CLI_SHA256:-}" || {
+          echo "KIRO_CLI_SHA256 is not set. The Dockerfile refuses to build without it:";
+          echo "  curl -sSL \"$KIRO_CLI_URL\" | shasum -a 256";
+          echo "then set the KiroCliSha256 stack parameter.";
+          exit 1;
+        }
+      - test "$(uname -m)" = "aarch64" || { echo "This project must run on an ARM_CONTAINER build image; got $(uname -m)"; exit 1; }
+      - test -f "${WORKER_DIR}/Dockerfile" || { echo "no Dockerfile at ${WORKER_DIR} - check WORKER_DIR and the source location"; exit 1; }
+      - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+  build:
+    commands:
+      - set -euo pipefail
+      - IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME}"
+      # A second, immutable tag from the commit that produced the image, so a
+      # deployed runtime can always be traced back to a source revision even when
+      # IMAGE_TAG is a moving name.
+      - COMMIT_TAG="${CODEBUILD_RESOLVED_SOURCE_VERSION:-nosource}"
+      - cd "$WORKER_DIR"
+      # --platform linux/arm64 is explicit even on an ARM host: AgentCore rejects
+      # any other architecture, and the Dockerfile asserts it too. --build-arg
+      # carries the pinned artifact URL and its digest; neither is a secret, and no
+      # credential is ever passed as a build arg.
+      - >-
+        docker build
+        --platform linux/arm64
+        --build-arg "KIRO_CLI_URL=${KIRO_CLI_URL}"
+        --build-arg "KIRO_CLI_SHA256=${KIRO_CLI_SHA256}"
+        -t "${IMAGE}:${IMAGE_TAG}"
+        -t "${IMAGE}:${COMMIT_TAG}"
+        .
+      # AgentCore's image limit is 2 GB. Report the size and fail here rather than
+      # at runtime creation, where the error is far less obvious.
+      - SIZE_BYTES=$(docker image inspect "${IMAGE}:${IMAGE_TAG}" --format '{{.Size}}')
+      - echo "image size ${SIZE_BYTES} bytes ($((SIZE_BYTES / 1024 / 1024)) MiB); AgentCore limit is 2 GB"
+      - test "$SIZE_BYTES" -lt 2147483648 || { echo "FATAL: image exceeds the 2 GB AgentCore limit"; exit 1; }
+
+  post_build:
+    commands:
+      - set -euo pipefail
+      - IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME}"
+      - COMMIT_TAG="${CODEBUILD_RESOLVED_SOURCE_VERSION:-nosource}"
+      - docker push "${IMAGE}:${IMAGE_TAG}"
+      - docker push "${IMAGE}:${COMMIT_TAG}"
+      - echo "pushed ${IMAGE}:${IMAGE_TAG} and ${IMAGE}:${COMMIT_TAG}"
+      # The runtime does not pick up a new image on its own. Updating it is a
+      # human action; the command is in infra/README.md.
+      - echo "NEXT (human): point the AgentCore runtime at this tag - see infra/README.md"
