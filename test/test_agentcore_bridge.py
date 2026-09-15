@@ -415,6 +415,71 @@ def test_liveness_is_unknown_before_the_first_frame_and_dead_once_silent() -> No
 
 
 @pytest.mark.asyncio
+async def test_the_watermark_is_handed_to_a_sink_for_durability(socket_root: Path) -> None:
+    """A restart must be able to attach from where this gateway got to.
+
+    Without it, a resumed run replays the whole transcript and re-delivers every
+    approval -- so the watermark is durable state, not a counter.
+    """
+    seen: list[int] = []
+    with fake_worker() as worker:
+        bridge, shim, _t = _bridge(worker, socket_root, watermark_sink=seen.append)
+        worker.script([_text_update(), _end_turn()])
+        async with shim:
+            run = asyncio.ensure_future(bridge.run({"prompt": "p"}))
+            await shim.to_agent()
+            await asyncio.wait_for(run, 10)
+
+    assert seen, "the sink must see the watermark advance"
+    assert seen == sorted(seen), "and it must only ever move forward"
+    assert seen[-1] == bridge.outcome.last_seq
+
+
+@pytest.mark.asyncio
+async def test_a_failing_sink_does_not_kill_the_turn(socket_root: Path) -> None:
+    """A lost watermark costs a replay; raising here would cost the turn."""
+
+    def _explode(_seq: int) -> None:
+        raise OSError("disk full")
+
+    with fake_worker() as worker:
+        bridge, shim, _t = _bridge(worker, socket_root, watermark_sink=_explode)
+        worker.script([_end_turn()])
+        async with shim:
+            outcome = await asyncio.wait_for(bridge.run({"prompt": "p"}), 10)
+    assert outcome.stop_reason == "end_turn"
+
+
+def test_a_remote_run_persists_the_coordinates_a_restart_needs(tmp_path: Path) -> None:
+    """id + session + watermark, and NOTHING new on a local run's record."""
+    import json
+    import os
+
+    from kiro_crew import subagent_persistence as sp
+
+    os.environ["KIROCREW_HOME"] = str(tmp_path)
+    try:
+        remote = sp.create_agent_folder(
+            "a" * 12, task="t", executor="agentcore", remote_session_id="rs-1"
+        )
+        local = sp.create_agent_folder("b" * 12, task="t")
+    finally:
+        os.environ.pop("KIROCREW_HOME", None)
+
+    remote_state = json.loads((remote / "state.json").read_text(encoding="utf-8"))
+    assert remote_state["executor"] == "agentcore"
+    assert remote_state["remote_session_id"] == "rs-1"
+    assert remote_state["remote_last_seq"] == 0, "a fresh run has rendered nothing"
+
+    local_state = json.loads((local / "state.json").read_text(encoding="utf-8"))
+    for key in ("executor", "remote_session_id", "remote_last_seq"):
+        assert key not in local_state, (
+            "a local run's record must stay byte-identical, so a reader cannot mistake "
+            "a default for a remote session"
+        )
+
+
+@pytest.mark.asyncio
 async def test_the_bridge_feeds_liveness_from_stream_traffic(socket_root: Path) -> None:
     with fake_worker() as worker:
         worker.script([_text_update(), _end_turn()])

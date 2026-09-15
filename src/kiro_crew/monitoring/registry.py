@@ -77,6 +77,24 @@ REVIEW_READY = "review_ready"
 #: it REACHED a conclusion, whatever that conclusion turns out to be.
 RUN_COMPLETE = "run_complete"
 
+#: A remote agent session running in a Bedrock AgentCore microVM. Registered so a
+#: long-running remote turn is a WATCHABLE subject rather than something only its own
+#: bridge knows about -- the plan's WP6 step 3, whose whole requirement is that it adds
+#: nothing to the decision, persistence, driver or delivery layers.
+#:
+#: NOT publicly armable, and for the same reason as the workflow run rather than a
+#: weaker one: a caller has no way to name a remote session. Its id is minted by the
+#: bridge and appears in no URL, so the only thing that can arm this is the code that
+#: already holds the session -- which is what keeps the registry's "a kind answers for
+#: its own capabilities" rule honest here.
+AGENTCORE_SESSION = "agentcore_session"
+
+#: What a remote session's completion IS. Its own objective rather than ``run_complete``
+#: because the two terminal vocabularies differ: a workflow run reaches a conclusion,
+#: while a remote session ends on a ``stopReason`` and may also end by its container
+#: being reclaimed -- a state no workflow run has.
+SESSION_SETTLED = "session_settled"
+
 
 @dataclass(frozen=True)
 class MonitorKind:
@@ -121,6 +139,16 @@ _KINDS: dict[str, MonitorKind] = {
         name=GH_PR,
         objectives=frozenset({REVIEW_READY}),
         publicly_armable=False,
+        supports_shadow=False,
+    ),
+    AGENTCORE_SESSION: MonitorKind(
+        name=AGENTCORE_SESSION,
+        objectives=frozenset({SESSION_SETTLED}),
+        publicly_armable=False,
+        # False, and this is the honest answer rather than a modest one: the
+        # persistence-only path has never been run for this kind. Claiming it would be a
+        # statement about code that does not exist, which is exactly what the module
+        # docstring says a capability must not be.
         supports_shadow=False,
     ),
     GITHUB_WORKFLOW_RUN: MonitorKind(

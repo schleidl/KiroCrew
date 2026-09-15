@@ -495,6 +495,98 @@ export async function failSession(entry, message, { code, terminate = true } = {
 	return emitted;
 }
 
+/**
+ * Validate the worktree, then integrate it, then close — the post-run half.
+ *
+ * A FAIL-CLOSED gate rather than a courtesy: an agent that finished its turn has
+ * produced a diff nobody has looked at, and integrating it unvalidated is how a red
+ * branch reaches a shared one. So validation runs first and a failure SKIPS
+ * integration while still reporting; only a clean turn with a passing validation is
+ * delivered.
+ *
+ * Every outcome is emitted into the session's own sequence space rather than logged,
+ * because the bridge is the only consumer and a delivery that happened invisibly is
+ * indistinguishable, from the operator's side, from one that did not.
+ *
+ * Ordered before `closeSession` and awaited, not fired: the hub must still be open to
+ * carry these events, and closing first would drop them.
+ */
+async function deliverThenClose(entry, terminalEvent, deps = {}) {
+	const close = deps.close ?? closeSession;
+	try {
+		if (String(terminalEvent?.stopReason ?? "") !== "end_turn") {
+			// A cancelled, crashed or stopped turn has no result to deliver. Said out
+			// loud, because silence here reads as "delivery failed".
+			entry.hub.emit({
+				type: "status",
+				phase: "delivery_skipped",
+				reason: `stopReason=${terminalEvent?.stopReason ?? "unknown"}`,
+			});
+			return;
+		}
+		const cwd = String(entry.meta?.cwd ?? "");
+		if (!cwd) {
+			entry.hub.emit({ type: "status", phase: "delivery_skipped", reason: "no worktree" });
+			return;
+		}
+		// Imported lazily and overridable: the two helpers shell out to git and to a
+		// project's own toolchain, so a test that could not substitute them would have
+		// to build a repository to assert an ORDERING.
+		let validate = deps.validate;
+		let integrate = deps.integrate;
+		if (!validate || !integrate) {
+			const [{ makeValidator }, { integrateToMain }] = await Promise.all([
+				import("./validate.mjs"),
+				import("./integrate.mjs"),
+			]);
+			validate ??= makeValidator(cwd, { log: () => {} });
+			integrate ??= integrateToMain;
+		}
+
+		const verdict = await validate();
+		entry.hub.emit({
+			type: "status",
+			phase: "validated",
+			ok: verdict?.ok !== false,
+			detail: redact(String(verdict?.output ?? "")).slice(0, 4000),
+		});
+		if (verdict?.ok === false) {
+			entry.hub.emit({
+				type: "status",
+				phase: "delivery_skipped",
+				reason: "validation failed",
+			});
+			return;
+		}
+
+		// The SAME validator is handed to the integration, which re-runs it after each
+		// rebase attempt. That is the point: a diff that validated on its own branch can
+		// still be broken by whatever landed on the base meanwhile, and a rebase that
+		// only checked for conflicts would deliver exactly that.
+		const result = await integrate({ cwd, validate, log: () => {} });
+		entry.hub.emit({
+			type: "status",
+			phase: "integrated",
+			ok: result?.ok !== false,
+			detail: redact(String(result?.reason ?? result?.output ?? "")).slice(0, 4000),
+		});
+	} catch (err) {
+		// A delivery failure must not rewrite the turn's own outcome: the session is
+		// already terminal and its `done` has been emitted, so this is reported as a
+		// NON-fatal error beside it rather than as a second terminal event.
+		entry.hub.emit({
+			type: "error",
+			fatal: false,
+			message: redact(`delivery failed: ${err?.message ?? err}`),
+		});
+	} finally {
+		await close(entry);
+	}
+}
+
+/** Test seam for {@link deliverThenClose}: the same function with injectable steps. */
+export const deliverThenCloseForTests = deliverThenClose;
+
 /** Archive the transcript (when configured) and close the hub. */
 async function closeSession(entry) {
 	if (transcriptArchivingEnabled()) {
@@ -639,6 +731,10 @@ export async function startSession(entry, payload, { spawn, resolveApiKey = reso
 		entry.hub.emit({ type: "status", phase: "isolation", ...isolation });
 
 		const { cwd } = await prepareWorkspace(entry, payload);
+		// Recorded because the post-run delivery pipeline reads it AFTER the child is
+		// gone, when nothing else still holds it. Not a credential and already emitted
+		// on the agent_ready status, so it carries no new disclosure.
+		entry.meta.cwd = cwd;
 		// Resolved here and handed straight to the child's env. Not returned, not
 		// logged, not stored on the entry, not in any event.
 		const apiKey = await resolveApiKey();
@@ -648,7 +744,7 @@ export async function startSession(entry, payload, { spawn, resolveApiKey = reso
 			apiKey,
 			spawn,
 			onTerminal: (event) => {
-				if (finishSession(entry, event)) void closeSession(entry);
+				if (finishSession(entry, event)) void deliverThenClose(entry, event);
 			},
 		});
 		entry.child = child;

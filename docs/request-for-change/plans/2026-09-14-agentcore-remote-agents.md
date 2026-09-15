@@ -223,13 +223,20 @@ Branch `feat/agentcore-ui`.
 
 Branch `feat/agentcore-delivery`.
 
-- [ ] **Step 1: Repository delivery.** Wire the ported validation and integration
+- [x] **Step 1: Repository delivery.** Wire the ported validation and integration
   helpers as post-run steps, with the forge credential supplied through the git
   authentication helper so no token touches disk.
-- [ ] **Step 2: Re-attach after a restart.** Persist the remote session id and the
+- [~] **Step 2: Re-attach after a restart.** Persist the remote session id and the
   last rendered sequence number with the subagent's state, and resume on boot.
-- [ ] **Step 3: Watch kind.** Register the remote run as a monitor kind, adding
+  *PERSISTENCE done: `create_agent_folder` writes `executor`, `remote_session_id`
+  and `remote_last_seq` for a remote run only, and the bridge advances the
+  watermark through a `watermark_sink` whose failure costs a replay rather than the
+  turn. RESUME ON BOOT is NOT wired — nothing reads those fields at startup yet, so
+  a gateway restart still abandons a live container. That needs the orphan-recovery
+  path to reconstruct a bridge from the persisted coordinates and attach from
+  `remote_last_seq`, which is a change to recovery rather than to this package.*
+- [x] **Step 3: Watch kind.** Register the remote run as a monitor kind, adding
   nothing to the decision, persistence, driver or delivery layers.
-- [ ] **Step 4: Gates.**
+- [x] **Step 4: Gates.**
 
 Indexed from [README.md](README.md).

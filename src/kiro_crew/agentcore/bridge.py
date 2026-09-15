@@ -349,6 +349,7 @@ class AgentCoreBridge:
         poll_interval_ms: int = RECONNECT_POLL_INTERVAL_MS,
         clock: Callable[[], float] | None = None,
         dial_timeout_secs: float = DIAL_TIMEOUT_SECS,
+        watermark_sink: Callable[[int], None] | None = None,
     ) -> None:
         if len(session_id) < SESSION_ID_MIN_LENGTH:
             raise ValueError(
@@ -364,6 +365,12 @@ class AgentCoreBridge:
         # any loop is running, and it measures elapsed silence rather than scheduling.
         self._clock = clock or time.monotonic
         self._dial_timeout = dial_timeout_secs
+        # Where the watermark goes so a RESTART can attach from it rather than replaying
+        # a whole transcript and re-delivering every approval. A callback rather than a
+        # persistence import: a bridge does not know which subagent id it serves -- the
+        # run path does -- and giving this module a durable-store dependency would make
+        # every test of it need one.
+        self._watermark_sink = watermark_sink
 
         self._watermark = 0
         self._acp_session_id = ""
@@ -528,6 +535,7 @@ class AgentCoreBridge:
             # MUST advance, or the same gap is re-reported on every subsequent poll.
             if through > self._watermark:
                 self._watermark = through
+                self._note_watermark(through)
             self._outcome.history_gaps += 1
             logger.info(
                 "agentcore session %s: %d event(s) pruned through seq %d",
@@ -544,6 +552,7 @@ class AgentCoreBridge:
         if seq is not None:
             self._watermark = seq
             self._outcome.last_seq = seq
+            self._note_watermark(seq)
 
         if kind == "acp":
             await self._to_agent(event.get("payload"))
@@ -574,6 +583,20 @@ class AgentCoreBridge:
             self._outcome.exit_code = raw_exit if isinstance(raw_exit, int) else None
             return self._outcome.stop_reason
         return None
+
+    def _note_watermark(self, seq: int) -> None:
+        """Hand the advanced watermark to the sink, if any. Never raises into the stream.
+
+        A durable write that failed must not kill a live session: the cost of a lost
+        watermark is a replay on the next restart, and the cost of raising here is the
+        turn.
+        """
+        if self._watermark_sink is None:
+            return
+        try:
+            self._watermark_sink(seq)
+        except Exception:
+            logger.debug("agentcore: watermark sink failed at seq %d", seq, exc_info=True)
 
     async def _to_agent(self, payload: object) -> None:
         """Write one raw JSON-RPC message into the relay, newline-framed."""
