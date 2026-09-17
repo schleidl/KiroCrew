@@ -208,11 +208,6 @@ SOURCE=<see "Where the build gets its source">
 Every item here is a mutation of a shared or credential-bearing resource. An
 agent session in this repository may read and describe freely; none of these:
 
-- **Deploy or update the stack** (steps 3 and 6), including any
-  `cloudformation deploy`, `create-stack`, `update-stack` or `delete-stack`.
-- **Write any secret value** (step 4). Creating the empty shell is the
-  template's job; `put-secret-value` is a human's. The Kiro API key in
-  particular must never pass through a chat transcript — read it from a file.
 - **Create the forge app** and install it on the target repositories, and record
   its app id, installation id and private key. This grants write access to every
   repository it is installed on.
