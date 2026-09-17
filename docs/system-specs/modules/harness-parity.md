@@ -3,7 +3,8 @@
 A *harness* is the agent process Kiro Crew drives over ACP. Kiro Crew has one
 first-class harness — `kiro-cli` (`ACP_BACKEND_KIRO`, spelled `""`) — and a
 growing set of adapted ones: Claude Code (`ACP_BACKEND_CLAUDE`), `KAS`
-(`ACP_BACKEND_KAS`), Codex (`ACP_BACKEND_CODEX`), and whatever a
+(`ACP_BACKEND_KAS`), Codex (`ACP_BACKEND_CODEX`), the remote AgentCore host
+(`ACP_BACKEND_AGENTCORE`, registered but not baseline-selectable), and whatever a
 bring-your-own (BYO) adapter registers next.
 
 Kiro, Claude Code, KAS and Codex are selectable on a plain public build; Claude Code in
@@ -19,10 +20,12 @@ core can spell is an id an operator can choose unless something states the
 exception — pinned by
 `test_agent_backend_editable.py::test_baseline_ships_every_known_backend`, which
 guards against an undocumented NARROWING rather than a widening.
-There is no exception today: `NOT_SHIPPED_SELECTABLE` is empty, which is the
-healthy state. `ACP_BACKEND_CODEX` was the last member and left it once both
-halves landed — `backend_install.py` gained its probe, so the install row names
-the missing component and its command instead of reading `unknown`, and
+There is exactly one exception today: `NOT_SHIPPED_SELECTABLE` holds
+`ACP_BACKEND_AGENTCORE`, the remote AgentCore harness, whose selectability needs
+the `kirocrew[agentcore]` extra and the `capabilities.remote_exec` scope — see the
+AgentCore section below. `ACP_BACKEND_CODEX` was the previous member and left it
+once both halves landed — `backend_install.py` gained its probe, so the install row
+names the missing component and its command instead of reading `unknown`, and
 `acp_tool_gate` established that its tool calls reach the PreToolUse gate.
 
 Read the invariants below against that tree: four harnesses can serve a real
@@ -135,6 +138,118 @@ in a separate gate. Group D reaches the four AI review lanes through
 `AUTOSDE.yaml`'s `harness-parity` rule, which every lane's prompt treats as the
 source of truth for what blocks.
 
+## The AgentCore remote harness, invariant by invariant
+
+`ACP_BACKEND_AGENTCORE = "agentcore"` is the first host that does not run on the
+operator's machine: the agent is a `kiro-cli acp` child inside a Bedrock AgentCore
+Runtime microVM in the operator's own account, and the LOCAL argv is
+`kiro_crew.agentcore.stdio_shim` — a byte relay whose stdin and stdout are the pipes
+`AcpClient` already writes to and whose other end is one UNIX socket to a bridge in
+the gateway process. Design:
+[rfc-agentcore-remote-agents.md](../../request-for-change/rfc-agentcore-remote-agents.md).
+
+Every invariant is answered here rather than in the PR body, because the id is
+registered at fourteen sites and a reader auditing one of them needs to know which
+invariant it was answering. Two answers are structurally new and are marked as such.
+
+| Id | Answer for `agentcore` | Where |
+|---|---|---|
+| **H1** | Untouched, and asserted directly. `AgentConfig.acp_backend` still defaults to `ACP_BACKEND_KIRO`, and the remote id is absent from `BASELINE_SELECTABLE_BACKENDS`, so an operator who configures nothing gets Kiro and an operator who names `agentcore` on a plain build ALSO gets Kiro with a logged reason. The per-session executor override is inert when absent: with no `executor` the factory resolves the Kiro default unchanged. | `agent_sdk/backends.py` (`BASELINE_SELECTABLE_BACKENDS`, the exclusion comment); `test_agentcore_backend.py::test_the_id_is_known_but_not_baseline_selectable`, `::test_an_unregistered_id_degrades_rather_than_reaching_construction`, `::test_a_session_with_no_executor_still_resolves_the_kiro_default` |
+| **H2** | `agent.provider` untouched, still `enum=["acp"]`. The remote host is selected at `agent.acp_backend`, or per session by the `executor` value that becomes what the one gate is asked about. No second provider, no `LLMProvider` presenting as the Kiro backend — which is the shape H2 exists to refuse and the RFC's own rejected alternative. | `config/loader.py` (`AgentConfig.provider`, unchanged); `test_harness_parity.py::test_provider_enum_is_acp_only` |
+| **H3** | The same ONE gate, reached by a new INPUT rather than a new check. `members.select_provider_backend` gained an `executor` arm above the member-DM arm, and that arm calls the same `resolve_selected_backend` — so an unknown, misspelled or non-string executor degrades to Kiro with a logged reason instead of propagating to `AcpProvider`, which would raise. `agentcore` itself degrades on a plain build for exactly this reason, and `register_selectable_backend` is what makes it survive. Nothing here reads the platform context. | `members.py` (`select_provider_backend`), `agent_sdk/backends.py` (`resolve_selected_backend`, unchanged); `test_agentcore_backend.py::test_an_unselectable_executor_degrades_to_kiro` (5 shapes incl. `17`, `None`), `::test_registering_it_makes_the_one_gate_resolve_it` |
+| **H4** | Still exactly ONE logged gate on the per-session path, and the count is asserted rather than argued: a patch on the re-export shim counts crossings of `resolve_selected_backend` for one provider construction and sees `[ACP_BACKEND_AGENTCORE]`. A second gate — an executor-specific coercion beside the existing one — shows up as a count of two. Scope stated honestly: this counts the per-session crossing only; the persisted-field crossing in `config/sections.py` binds the function at module import, always existed, and answers a different question. | `test_agentcore_backend.py::test_the_gate_is_reached_exactly_once` |
+| **H5** | Every identity comparison added is positive against a named constant: `AcpProvider.is_agentcore_backend` and the `provider_label` branch both read `backend == ACP_BACKEND_AGENTCORE`. No inequality, no bare literal, no `not is_<other>_backend`. The temptation here is concrete and named in the source: the remote child IS kiro-cli, so answering True to `is_kiro_backend` would look reasonable and would hand a remote session every local-process assumption Kiro's path carries. | `providers/acp.py` (`is_agentcore_backend`, `provider_label`); `scripts/check_harness_parity.py` (added-line gate), `test_acp_backend_kas.py::TestBackendPredicates` (exactly one predicate holds) |
+| **H6** | **An explicit NON-MEMBERSHIP decision for every Group B set**, recorded as one block beside the sets rather than inferred. The answer is "no" to all of them, and the reason is nearly always the same: the remote child is kiro-cli and WOULD answer most of these, but the channel is one socket through a single-turn worker session, so a capability claimed here is a capability asserted about the BRIDGE, which WP3 has not built. Three are load-bearing rather than merely unmeasured — `ACP_BACKENDS_SESSION_SHARING` (the dedicated arm is the only arm that reaches the factory where the gate lives), `ACP_BACKENDS_HOST_AUTH_CALLBACK` (a security decision: the peer on the socket is a bridge, not a process Crew spawned), and `ACP_BACKENDS_HARNESS_OWNED_SESSIONS` (a single-turn session is gone at `done`, so a remote session id must not read as resumable). | `agent_sdk/backends.py` (the `ACP_BACKEND_AGENTCORE`'s capability decisions block); `test_harness_parity.py::test_capability_sets_are_subsets_of_known_backends` and the Group B completeness gate, which answers for every known host at once |
+| **H7** | Untouched, and untouchable from here: `is_kiro_cli` stays a positive Kiro test, and the remote id is outside `ACP_BACKENDS_INTERNAL_SANDBOX`, so no seatbelt skip and no Windows delegation is granted. The container's own microVM plus its privilege drop to a non-root uid is a stronger boundary than either, and it is deliberately NOT expressed as membership in that set: the set governs whether Crew SKIPS its own wrap for the LOCAL argv, and the local argv is a byte relay Crew wraps like any other child. Membership fails open, so it is never claimed on a guarantee that lives on another host. | `sandbox.py` (unchanged), `agent_sdk/backends.py` (`ACP_BACKENDS_INTERNAL_SANDBOX`, non-membership recorded); `test_harness_parity.py::test_is_kiro_cli_is_positive` |
+| **H8** | The constant is DEFINED in `agent_sdk/backends.py`, the leaf module behind the agent-SDK boundary, and re-exported by the `acp_backends` shim and `acp/types.py` for existing importers — no second definition anywhere, which the parity gate's `vocabulary-home` rule enforces on added lines. It is in `ACP_BACKENDS_KNOWN`, every capability set remains a subset of that, and `AcpProvider.__init__` accepts it because of that membership rather than by a special case. | `agent_sdk/backends.py` (`ACP_BACKEND_AGENTCORE`, `ACP_BACKENDS_KNOWN`), `acp_backends.py` / `acp/types.py` (re-export only); `test_agent_sdk_capabilities.py::test_known_membership_is_unchanged_by_the_move`, `test_harness_parity.py::test_capability_sets_are_subsets_of_known_backends` |
+| **H9** | Untouched. `KiroHarness.resolve_spawn` keeps its own branch, its pre-spawn agent materialization and its `--model` pin; nothing was generalized to accommodate a host with no binary. `AgentCoreHarness` is a separate class whose argv shares no code with it, and it resolves its own coordinates through its own patchable function so the universal "no harness returns an argv it cannot launch" invariant can be asserted against it. | `acp/harness/kiro.py` (unchanged), `acp/harness/agentcore.py` (`resolve_spawn`, `_resolve_runtime_coordinates`); `test_harness_parity.py::test_kiro_spawn_argv_keeps_its_own_branch`, `test_acp_harness_contract.py::test_a_missing_binary_aborts_the_spawn[agentcore]` |
+| **H10** | Its own per-host literals, and the temptation to share Kiro's is explicitly refused in the source. `protocol_version` is the INTEGER `1`, not kiro-cli's date-stamped `2025-08-22`, even though the remote child is kiro-cli: Spike C observed an integer on this wire and the worker forwards `initialize` rather than asserting a version. `client_capabilities` is `{}` because every capability Crew advertises here is a promise about what the BRIDGE answers. | `acp/harness/agentcore.py` (`protocol_version`, `client_capabilities`); `test_harness_parity.py::test_handshake_is_per_backend`, `test_acp_harness_contract.py::test_protocol_versions_differ_in_type_not_just_value` |
+| **H11** | `PROVIDER_LABEL_AGENTCORE = "agentcore"`, its own entry in the closed mapping. This is the invariant the remote host is most exposed to, and the source says why: the label indexes session-map persistence and session-file cleanup, so reusing the kiro label — tempting, because the child IS kiro-cli — would persist a remote session as a Kiro one and the map would prune its id for want of a local kiro transcript that was never written on this machine. | `acp/types.py` (`PROVIDER_LABEL_AGENTCORE`), `providers/acp.py` (`provider_label`); `test_harness_parity.py::test_every_known_backend_has_a_label` |
+| **H12** | Untouched, and kept safe by a namespace rather than by a comparison. The remote id gets its own `_MODEL_REGISTRY_NAMESPACE_BY_BACKEND` key instead of sharing kiro's `acp` bucket: the ids the remote child advertises are the same SPELLING as the local ones, but the entitlement behind them is the container's credential rather than the operator's, so folding the two would let one picker overwrite the other. No model id is hardcoded anywhere — the default stays `"auto"`, and the id is outside `ACP_BACKENDS_MODEL_VIA_CONFIG_OPTION`, so no pre-flight comparison runs for it at all. | `agent_sdk/backends.py` (`_MODEL_REGISTRY_NAMESPACE_BY_BACKEND`, `model_registry_namespace`); `test_harness_parity.py::test_model_preflight_allows_unknown_advertised_set` |
+| **H13** | Additive, `CONTRACT_VERSION` unchanged at 1. The Kiro construction path gains **no conditional and no new required argument**: `executor` is optional on the factory closure and defaults to `None`, and it was already being accepted silently by the closure's `**_kwargs` sink before it was named — so naming it added a parameter and no plumbing. An empty or absent executor falls through untouched. Kiro's harness lookup stays total. **New, and the reason this row is not a formality:** the dedicated arm is FORCED at `subagent_manager/run.py` rather than merely arrived at. `is_session_sharing_eligible` being false for the remote harness and the shared-runtime branch's local-provider type check both push a remote session there, and NEITHER is sufficient, because `use_session_sharing` is computed from the SPAWN's eligibility before any harness exists: an executor passed to a sharing-eligible spawn would ride `extra_kwargs` to a factory the shared arm never calls, and the run would come up on the parent's harness with nothing red to say so — a wrong answer, not an error. | `config/loader.py` (`create_provider_factory`, the `executor` parameter), `subagent.py` (`SubagentInfo.executor`), `subagent_manager/run.py` (the forced arm), `acp/harness/__init__.py` (`harness_for`); `test_agentcore_backend.py::test_an_executor_forces_the_dedicated_arm_explicitly`, `::test_the_run_path_carries_the_executor_on_the_existing_pass_through`, `test_acp_harness_contract.py::test_the_kiro_lookup_is_total` |
+| **H14** | No `hasattr` / `getattr` probe was added to any path. The one capability the session layer reads off this provider is `is_agentcore_backend`, a declared property on `AcpProvider` beside the four existing ones, so the absent case is a real `False` rather than a missing attribute. Nothing Kiro-only became reachable through the ABC. Review-only, so this row is a statement of what a reviewer should check rather than a test citation. | `providers/acp.py` (`is_agentcore_backend`), `providers/base.py` (unchanged); review-only (`AUTOSDE.yaml` → `harness-parity`) |
+
+Two answers above are structurally new and worth carrying forward rather than
+reading as bookkeeping.
+
+**H13's forced arm is the finding, not the detail.** Every earlier per-spawn
+override (`model`, `reasoning_effort`) forces the dedicated arm for an efficiency
+reason: the parent's runtime was started with the parent's model and cannot switch
+per session. For an executor the reason is categorical — the parent's shared runtime
+is a process of the parent's own HARNESS — and the failure mode if the branch is
+missing is a silent downgrade rather than an ignored preference. That is why the test
+pins the branch on the run path's source instead of inferring it from
+`ACP_BACKENDS_SESSION_SHARING` non-membership, which would pass while the branch was
+deleted.
+
+**H1's exception is the first real use of `NOT_SHIPPED_SELECTABLE`.** The allowlist
+had been empty since it was written, and the healthy reading of that was "every id
+this core can spell, an operator can choose". This id cannot be, and the reason is
+not "unfinished": selectability needs the `kirocrew[agentcore]` extra, which is what
+puts a bridge behind the shim's socket, and the `capabilities.remote_exec` scope,
+whose capability default is false. Offering the switch would render an option whose
+every session stalls at the ACP handshake with nothing listening on the far end of
+the socket — the "an option that cannot start a session" state
+`register_selectable_backend` exists to prevent. The edition that ships the extra
+calls that function, so spellable-and-unreachable is a property of the registration
+seam rather than of a narrowing somewhere downstream.
+
+One thing the invariants do NOT cover, stated so a reader does not look for it here:
+the local process this harness spawns is a byte relay, and what keeps it from being a
+general-purpose tunnel is its own contract — it binds and accepts exactly ONE
+connection, never dials out, holds no credential, and refuses a peer that cannot
+present the session's owner token. That is a security property of
+`kiro_crew/agentcore/stdio_shim.py`, pinned by `test_agentcore_stdio_shim.py`, not a
+harness-parity invariant.
+
+### The bridge behind the socket
+
+`kiro_crew/agentcore/bridge.py` is the other end of the relay's socket, and the
+division of labour is the point: the shim BINDS and listens, the bridge DIALS and
+presents the owner token as one newline-terminated line. That order is not
+arbitrary — the shim owns the node's permissions (it binds under `umask(0o077)` and
+closes its listener after exactly one accept) and the bridge owns the coordinates it
+minted, so neither derives what the other chose. A dial that fails with ENOENT is
+therefore expected while `AcpClient` is still starting the relay, and retried; the
+bridge is the side that carries the retry because the shim has no dial-out path at
+all.
+
+Three behaviours are the bridge's alone, and each is a client obligation the worker
+does not discharge:
+
+- **The sequence watermark.** The worker guarantees monotonicity and gap
+  announcement, never single delivery, so duplicate suppression lives here. A
+  replayed event at or below the watermark is dropped silently; a `history_gap`
+  ADVANCES the watermark to its `throughSeq`; `attach_end` never advances it,
+  because it describes one attach rather than the session.
+- **One resume path.** `start` answers 409 on an existing session, so a dropped
+  stream is recovered by polling the read-only `attach` action and never as a live
+  stream again. The loop ends on a terminal event or on `attach_end.live == false`,
+  the second because a session whose terminal event was pruned would otherwise be
+  polled forever.
+- **Delivery is not assumed.** A failed `rpc` answers 409 and an unparsable answer
+  counts as undelivered; both queue the message for re-send after the next
+  re-attach, which is safe because a JSON-RPC id is idempotent at the child.
+
+Two constraints a reader should not have to rediscover. The AWS SDK is imported
+INSIDE the method that needs it, so a public install without the `agentcore` extra
+never imports boto3 — pinned in a subprocess with the import blocked, the same
+pattern `test_approval_chain_no_cryptography.py` uses. And the relay's socket path is
+bounded: `sockaddr_un.sun_path` is 104 bytes on macOS, so the filename carries a
+16-character slug of the session id rather than the whole 41-character id and
+`socket_path_for` refuses a path over the limit with a message naming it. Overrunning
+it otherwise surfaces as `OSError: AF_UNIX path too long` from inside asyncio at spawn
+time, which names neither the cause nor the fix.
+
+Liveness is `kiro_crew/agentcore/liveness.py` and answers a different question from
+the local one on purpose. The relay's pid exists, and handing it to the CPU-sampling
+oracle would be wrong twice: a byte relay's CPU is flat while the agent is at its
+busiest, which reads as wedged, and it stays alive after the container is gone, which
+reads as healthy. So silence against the worker's own keepalive interval is the
+observable, `runtime_info()` answers `(None, None)`, and the existing oracle's
+`check_model_wait(None)` already returns `unknown` rather than `dead` — no change was
+needed there, which is why this is a declaration rather than a subsystem.
+
 ## Adding or changing an invariant
 
 1. Write the test first: an invariant is its test, and this table is the index.
@@ -154,6 +269,7 @@ source of truth for what blocks.
    the id is named in that test's `NOT_SHIPPED_SELECTABLE` allowlist together
    with the reason it cannot be offered yet: the id becomes spellable but
    unreachable, and that state needs a stated reason rather than a default.
-   The allowlist is empty today. The full sequence a new
-   harness walks, and which stage decides whether it lands dormant or
+   The allowlist holds `ACP_BACKEND_AGENTCORE` today, and the section below is
+   the worked example of what that reason has to look like. The full sequence a
+   new harness walks, and which stage decides whether it lands dormant or
    selectable, is [harness-onboarding.md](harness-onboarding.md).

@@ -25,6 +25,7 @@ from kiro_crew.acp.runtime import AcpRuntime, AcpRuntimeError
 from kiro_crew.acp.session_handle import AcpSessionHandle
 from kiro_crew.acp.session_provider import AcpSessionProvider
 from kiro_crew.acp.types import (
+    ACP_BACKEND_AGENTCORE,
     ACP_BACKEND_CODEX,
     ACP_BACKEND_KAS,
     ACP_BACKEND_KIRO,
@@ -38,6 +39,7 @@ from kiro_crew.acp.types import (
     ACP_BACKENDS_MEMBER_CAPABILITIES,
     ACP_BACKENDS_SESSION_SHARING,
     EVENT_COMPACTION_STATUS,
+    PROVIDER_LABEL_AGENTCORE,
     PROVIDER_LABEL_CLAUDE,
     PROVIDER_LABEL_CODEX,
     PROVIDER_LABEL_DEFAULT,
@@ -344,6 +346,7 @@ class AcpProvider(LLMProvider):
         permission_mode: str | None = None,
         crew_agent: str | None = None,
         private_memory: bool = False,
+        remote_bridge: Any = None,
     ) -> None:
         # An unrecognized backend would pass every ``_is_<backend>`` check and
         # spawn kiro-cli, so a typo'd config would drive the wrong agent with no
@@ -371,6 +374,14 @@ class AcpProvider(LLMProvider):
         if agent:
             kwargs["agent"] = agent
         self._private_memory = private_memory is True
+        # The remote session's bridge, or None on every local path. Held on the PROVIDER
+        # rather than passed into ``AcpClient``: the client's whole job is to talk to a
+        # child process over pipes, and it is the stdio shim -- not the client -- that
+        # knows there is a socket at all. Threading it into the client would make the
+        # transport aware of the remote host, which is the coupling the argv-only harness
+        # seam exists to avoid.
+        self._remote_bridge = remote_bridge
+        self._remote_task: Any = None
         # Retain the original identity when start() swaps the placeholder client
         # for a runtime handle whose session key is not yet populated.
         self._private_memory_session_key = session_key
@@ -562,6 +573,21 @@ class AcpProvider(LLMProvider):
     def is_kas_backend(self) -> bool:
         """True when this ACP provider talks to KAS (kiro-agent)."""
         return self._client.backend == ACP_BACKEND_KAS
+
+    @property
+    def is_agentcore_backend(self) -> bool:
+        """True when this ACP provider talks to a remote AgentCore agent.
+
+        A predicate of its own because ``is_kiro_backend`` is a POSITIVE test against
+        ``ACP_BACKEND_KIRO`` -- the empty string -- and exactly one predicate must hold
+        for any backend (harness-parity H5/H8). Without this the remote id answers
+        False to every one of them, and the site asking "which harness is this?" has no
+        true answer to fall back on. Note what it must NOT become: the remote child is
+        kiro-cli, so answering True to ``is_kiro_backend`` here would look reasonable
+        and would hand a remote session every local-process assumption Kiro's path
+        carries.
+        """
+        return self._client.backend == ACP_BACKEND_AGENTCORE
 
     @property
     def defer_replay_sid_promotion(self) -> bool:
@@ -1571,6 +1597,13 @@ class AcpProvider(LLMProvider):
             # sessions (session sharing).
             await self._start_kiro_runtime()
         else:
+            # A remote session's bridge starts BEFORE the relay is spawned, and the
+            # order is deliberate: the shim binds the socket and the bridge dials it, so
+            # whichever side is late simply waits -- the bridge retries the dial for its
+            # whole budget. Starting it after ``ensure_ready`` would invert that into a
+            # race the shim cannot survive, because the shim accepts exactly one
+            # connection and closes its listener straight after.
+            await self._start_remote_bridge()
             # ── CC path: legacy AcpClient (unchanged) ──
             await self._client.ensure_ready()
 
@@ -1621,7 +1654,54 @@ class AcpProvider(LLMProvider):
                 exc_info=True,
             )
 
+    async def _start_remote_bridge(self) -> None:
+        """Run this session's bridge concurrently, or do nothing on a local path.
+
+        The bridge outlives no session: its task is the session's, and
+        :meth:`shutdown` stops it. Started once -- a second ``start()`` on the same
+        provider (a resume, a model swap) must not open a second socket, because the
+        relay accepts exactly one connection and the second dial would be refused.
+        """
+        if self._remote_bridge is None or self._remote_task is not None:
+            return
+        import asyncio
+
+        start_body: dict[str, Any] = {}
+        # The client owns the working directory; the provider never did. Sent because the
+        # worker names its clone target relative to it, and omitted rather than guessed
+        # when the client has none.
+        _wdir = getattr(self._client, "work_dir", None) or getattr(self._client, "_work_dir", None)
+        if _wdir:
+            start_body["cwd"] = str(_wdir)
+        if self._private_memory_session_key:
+            # Named on the worker's own record so a container can be traced back to the
+            # session that asked for it. Not a credential and not a path.
+            start_body["delegatedBy"] = str(self._private_memory_session_key)
+        self._remote_task = asyncio.create_task(
+            self._remote_bridge.run(start_body), name="agentcore-bridge"
+        )
+
+    async def _stop_remote_bridge(self) -> None:
+        """Escalate the stop, then reclaim the task. Never raises into teardown."""
+        bridge, self._remote_bridge = self._remote_bridge, None
+        task, self._remote_task = self._remote_task, None
+        if bridge is None:
+            return
+        import asyncio
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            await bridge.stop()
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+
     async def shutdown(self) -> None:
+        # Before the client: the bridge's stop ladder ends by closing the socket, and the
+        # relay exits on that EOF -- so stopping it first lets the child come down the
+        # way a local agent does, instead of being reaped from underneath a live socket.
+        await self._stop_remote_bridge()
         await self._client.shutdown()
 
     @staticmethod
@@ -2025,6 +2105,10 @@ def provider_label(provider: Any) -> str:
         return PROVIDER_LABEL_KAS
     if backend == ACP_BACKEND_CODEX:
         return PROVIDER_LABEL_CODEX
+    # Positive comparison against the named constant, never an inequality or a bare
+    # literal (harness-parity H5/H8).
+    if backend == ACP_BACKEND_AGENTCORE:
+        return PROVIDER_LABEL_AGENTCORE
     if backend == ACP_BACKEND_OPENCODE:
         return PROVIDER_LABEL_OPENCODE
     if backend == ACP_BACKEND_PI:

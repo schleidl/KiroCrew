@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Bot, ScrollText, X, Lock, CheckCircle, AlertCircle, Loader as LoaderIcon, Ban, Wrench, MessageCircleQuestionMark, Workflow, BookmarkPlus, Component, GitPullRequest, CircleDot, Square, RotateCcw, Clock, Search, Link as LinkIcon, ExternalLink } from 'lucide-react'
+import { Bot, ScrollText, X, Lock, CheckCircle, AlertCircle, Loader as LoaderIcon, Ban, Wrench, MessageCircleQuestionMark, Workflow, BookmarkPlus, Component, GitPullRequest, CircleDot, Square, RotateCcw, Clock, Search, Link as LinkIcon, ExternalLink, Cloud } from 'lucide-react'
 import { api } from '../../api/client'
 import { LogViewer } from '../LogsPage'
 import Clickable from '../../components/Clickable'
@@ -260,6 +260,22 @@ function SubagentPane({ a, slot, onClick, selected }: { a: SubagentActivity; slo
             </code>
           )
         })()}
+        {/* WHERE this run executes, when that is not this machine. Rendered only for a
+            remote run, so a local card is byte-identical to what it always was. It is
+            deliberately not a status colour: a remote run is neither a warning nor an
+            error, it is a cost and an isolation boundary, and conflating it with the
+            downgrade chip's amber would teach the eye the wrong thing. */}
+        {a.remoteExecutor && (
+          <code
+            className="text-[11px] px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap inline-flex items-center gap-0.5 text-accent/80 bg-accent/10 border border-accent/20"
+            data-testid="subagent-executor"
+            aria-label={i18nT('pages.chat.activityViewer.executor_label', { executor: a.remoteExecutor })}
+            title={i18nT('pages.chat.activityViewer.executor_label', { executor: a.remoteExecutor })}
+          >
+            <Cloud size={10} aria-hidden className="inline-block align-middle" />
+            {a.remoteExecutor}
+          </code>
+        )}
         {!isPending && <span className="text-[11px] text-muted/40 ml-auto font-mono shrink-0 whitespace-nowrap tabular-nums">{fmtElapsed}</span>}
         {isRunning && <button data-testid="subagent-cancel-btn" className="text-[11px] px-1.5 py-0.5 rounded border border-danger/40 text-danger/70 hover:bg-danger-subtle hover:text-danger cursor-pointer transition-all shrink-0 whitespace-nowrap inline-flex items-center" onClick={onCancel}><X className="lucide-inline" /> {i18nT('pages.chat.activityViewer.cancel')}</button>}
         {isDone && <span className="text-[14px] text-muted bg-bg-hover px-1.5 py-0.5 rounded shrink-0 ml-1">{collapsed ? '▸' : '▾'}</span>}

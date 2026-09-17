@@ -406,6 +406,24 @@ async def api_spawn(request: web.Request) -> web.Response:
         batch_total = max(0, min(int(body.get("batch_total", 0) or 0), 1000))
     except (TypeError, ValueError):
         batch_total = 0
+    # Validated STRICTLY here rather than left to degrade at the selection gate. The
+    # gate's degrade-to-Kiro is the right answer for an id that is merely unselectable
+    # on this build, but a caller that ASKED for a remote executor and silently got a
+    # local run has been answered with the opposite of its request -- so an
+    # unrecognised value is a 400 naming the accepted set, and only a recognised one
+    # travels. Governance is still the gate that decides whether a recognised one runs.
+    from kiro_crew.subagent_manager.admission import REMOTE_EXECUTORS
+
+    executor = str(body.get("executor", "") or "").strip()
+    if executor and executor not in REMOTE_EXECUTORS:
+        return web.json_response(
+            {
+                "error": f"unknown executor {executor!r}",
+                "accepted": sorted(REMOTE_EXECUTORS),
+                "code": "unknown_executor",
+            },
+            status=400,
+        )
     # The async moment preceding the synchronous spawn(): warm here so the
     # on-loop, cache-only agent validation inside spawn() is a hit.
     if agent:
@@ -428,6 +446,7 @@ async def api_spawn(request: web.Request) -> web.Response:
         include_project=cleaned.get("include_project", True) is not False,
         memory_store=child_memory_store,
         _memory_mode=admitted_mode,
+        executor=executor,
     )
     if not info:
         # Reached mgr.spawn (submission COUNTED at the top of spawn()) but

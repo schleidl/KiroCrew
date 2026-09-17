@@ -106,6 +106,13 @@ class TestKeystonesAreSealedInEveryMode:
         # — a sandboxed process cannot mint a grant however the toggle was
         # spelled.
         "apps/.dev-grants.json",
+        # The remote-executor runtime coordinates. Sealed for the same reason and
+        # READABLE for the same reason: in-sandbox code must be able to tell a
+        # provisioned runtime from an absent one, while a write would let the agent
+        # name the remote executor its own turns run on. Masking it would make a
+        # provisioned runtime read as unconfigured, which is the ceiling-removal
+        # direction the READONLY note in ``sandbox.py`` describes.
+        "agentcore_runtime.json",
     )
 
     @_POSIX_ONLY
@@ -281,6 +288,37 @@ class TestTheReconciliationIsComplete:
         assert not hidden & readonly
         assert not hidden & visible
         assert not readonly & visible
+
+    def test_the_remote_runtime_coordinates_carry_exactly_one_disposition(self) -> None:
+        """The keystone leaf WP2 adds cannot land in none of the three.
+
+        Named individually for the reason ``KEYSTONES`` is: a test derived from the
+        same tuples the production code reads would pass just as happily after the
+        leaf was dropped. The reconciliation test above proves the union covers the
+        tool gate; this one proves WHICH disposition this leaf got, because the
+        other two are both wrong for it — ``HIDDEN`` makes a provisioned runtime
+        read as unconfigured (removing the ceiling instead of protecting it) and
+        ``VISIBLE`` leaves the write on the tool gate alone, which a spawned
+        interpreter's ``open()`` never routes through.
+        """
+        leaf = "agentcore_runtime.json"
+        dispositions = [
+            name
+            for name, leaves in (
+                ("HIDDEN", sandbox._CREW_HIDDEN_LEAVES),
+                ("READONLY", sandbox._CREW_READONLY_LEAVES),
+                ("VISIBLE", sandbox._CREW_SANDBOX_VISIBLE_LEAVES),
+            )
+            if leaf in leaves
+        ]
+
+        assert dispositions == ["READONLY"], f"{leaf} has dispositions {dispositions}"
+        # A mount needs an existing target, and absent is this leaf's DEFAULT state.
+        assert leaf in sandbox._CREW_PRECREATE_READONLY_FILE_LEAVES
+        # And it is on the tool gate, which is what makes the union pin cover it.
+        fenced = set(security.sensitive_home_dirs())
+        for prefix in _CREW_PREFIXES:
+            assert f"{prefix}/{leaf}" in fenced
 
     def test_the_gateway_launcher_is_a_top_level_readonly_leaf(self) -> None:
         """A nested leaf can be bypassed by renaming its writable parent.

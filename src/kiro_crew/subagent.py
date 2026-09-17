@@ -1349,6 +1349,14 @@ class SubagentInfo:
     # Wins over the ``role_efforts['subagent']`` pin; ``""`` defers to it.
     # Like ``model``, a non-empty value forces the dedicated-process path.
     reasoning_effort: str = ""
+    # The harness this ONE run is served by, carried as a VALUE on the existing
+    # ``extra_kwargs`` pass-through rather than written to config. ``""`` defers to the
+    # configured default, so an ordinary spawn resolves the Kiro backend exactly as
+    # before. Like the two above, a non-empty value forces the dedicated-process path --
+    # and here that is stronger than an optimization: the parent's already-started
+    # shared runtime is a process of the PARENT's harness and cannot host a session on
+    # a different one. WP4 exposes it as the ``spawn_run(executor=...)`` argument.
+    executor: str = ""
     allowed_tools: list[str] = field(default_factory=list)
     bare: bool = False
     # Continuable conversations (spawn_run keep=True / spawn_continue):
@@ -2319,7 +2327,16 @@ class SubagentManager:
         _from_queue: bool = False,
         _preassigned_id: str = "",
         _memory_mode: str | None = None,
+        *,
+        executor: str = "",
     ) -> SubagentInfo | None:
+        # Keyword-only, and named here rather than absorbed by a kwargs sink, because
+        # this facade is what the STAGGER QUEUE re-enters through: a drain calls
+        # ``spawn(**params)`` from the dict it stored, so an executor the signature
+        # cannot express is an executor the drain silently drops -- and dropping it
+        # means running a remote delegation's untrusted code on the operator's own
+        # machine. WP2 refused a remote spawn that would queue for exactly this
+        # reason; carrying it here is what let that refusal go.
         return self._admission.spawn_impl(
             task,
             parent_session_key,
@@ -2345,6 +2362,7 @@ class SubagentManager:
             _from_queue,
             _preassigned_id,
             _memory_mode=_memory_mode,
+            executor=executor,
         )
 
     async def _safe_announce(self, info: SubagentInfo) -> None:

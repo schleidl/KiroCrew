@@ -372,6 +372,8 @@ def create_agent_folder(
     context_groups: str = "",
     memory_store: str = "",
     memory_mode: str = "persistent",
+    executor: str = "",
+    remote_session_id: str = "",
 ) -> Path:
     """Create ``~/.kiro/crew/subagents/{id}/`` with ``state.json``.
 
@@ -421,6 +423,19 @@ def create_agent_folder(
         "memory_binding_version": 2,
         "updated_at": time.time(),
     }
+    if executor:
+        # The three facts a restart needs to re-attach instead of abandoning a paid
+        # container: WHERE it runs, WHICH session on that runtime, and how far this
+        # gateway had rendered. `remote_last_seq` starts at 0 and is advanced by the
+        # bridge, so a resume that reads it attaches from the right place -- reading it
+        # as absent would replay the whole transcript and re-deliver every approval.
+        #
+        # Only written for a remote run, so a local run's state.json is byte-identical
+        # to what it was and a reader that predates this cannot mistake a default for a
+        # remote session.
+        state["executor"] = executor
+        state["remote_session_id"] = remote_session_id
+        state["remote_last_seq"] = 0
     _atomic_write(d / "state.json", state)
     return d
 

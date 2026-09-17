@@ -22,12 +22,19 @@ from kiro_crew.acp.harness.base import (
     SpawnPlan,
     TeardownPolicy,
 )
+from kiro_crew.acp.harness.agentcore import AgentCoreHarness
 from kiro_crew.acp.harness.codex import CodexHarness
 from kiro_crew.acp.harness.kas import KasHarness
 from kiro_crew.acp.harness.kiro import KiroHarness
-from kiro_crew.acp.types import ACP_BACKEND_CODEX, ACP_BACKEND_KAS, ACP_BACKEND_KIRO
+from kiro_crew.acp.types import (
+    ACP_BACKEND_AGENTCORE,
+    ACP_BACKEND_CODEX,
+    ACP_BACKEND_KAS,
+    ACP_BACKEND_KIRO,
+)
 
 __all__ = [
+    "AgentCoreHarness",
     "CodexHarness",
     "HarnessAdapter",
     "KasHarness",
@@ -53,6 +60,12 @@ _HARNESSES: dict[str, type[HarnessAdapter]] = {
     # trying the preview, and would leave the runtime resolving a harness that
     # exists on disk but not in the table.
     ACP_BACKEND_CODEX: CodexHarness,
+    # Registered here even though the id is not baseline-selectable, for the same
+    # reason codex is registered independently of its routing switch: this table
+    # answers "which harness serves this host?", and an id in ``ACP_BACKENDS_KNOWN``
+    # with no entry would silently inherit kiro-cli's spawn argv, protocol version
+    # and teardown verb -- a session that starts and then behaves wrongly.
+    ACP_BACKEND_AGENTCORE: AgentCoreHarness,
 }
 
 

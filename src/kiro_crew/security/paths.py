@@ -456,6 +456,27 @@ _CREW_SECRET_LEAVES: list[str] = [
     # whole DIRECTORY so atomic-write temps and every sidecar file are
     # covered.
     "agentcore-inbound",
+    # The remote-executor runtime coordinates (runtime ARN, region, endpoint
+    # qualifier) that decide WHICH remote executor an agent's own turns run on.
+    # Not a secret -- an ARN, a region and a qualifier; the model credential lives
+    # in AWS Secrets Manager and the AgentCore call is signed in the unsandboxed
+    # gateway -- so this entry is here for the WRITE: an agent that could author it
+    # would name the executor its next delegation runs on, in an account the
+    # operator never consented to, reached with the gateway's own signing
+    # identity. That is the ``live_target.json`` shape one layer out, which is why
+    # the coordinates are keystone data rather than ``config.json`` data.
+    #
+    # Read is fenced too, on this gate only, for the reason the ceiling leaves are:
+    # the floor is read+write and a per-leaf carve-out would be a second rule to
+    # keep true. The OS disposition is deliberately the other one -- READONLY, not
+    # HIDDEN (``sandbox._CREW_READONLY_LEAVES``) -- because a reader that finds
+    # this leaf absent resolves to "no remote runtime is configured", so masking it
+    # would remove the coordinates rather than protect them.
+    #
+    # Fenced BEFORE its writer lands, the treatment ``agentcore-inbound`` above
+    # gets. Every legitimate reader (the bridge in the gateway process, the human
+    # provisioning path) opens the file directly rather than through this gate.
+    "agentcore_runtime.json",
     # Which checkout the gateway executes (Dev Fleet "Make live"). The pointer is
     # resolved during startup and exec'd into, so a writable one is arbitrary
     # code execution in the gateway's own identity — the agent must not be able

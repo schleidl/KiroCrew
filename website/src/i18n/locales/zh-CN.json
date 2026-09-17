@@ -9334,7 +9334,8 @@
         "artifacts_load_failed": "无法加载本次会话的产物",
         "library_load_failed": "无法加载产物库",
         "artifact_save_failed": "无法保存产物",
-        "workflow_runs_load_failed": "无法加载工作流运行"
+        "workflow_runs_load_failed": "无法加载工作流运行",
+        "executor_label": "在 {{executor}} 上远程运行"
       },
       "assistantMessage": {
         "applied_to_tasks": "已应用到任务",

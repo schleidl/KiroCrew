@@ -38,10 +38,12 @@ from kiro_crew.acp.harness import (
     SpawnContext,
     harness_for,
 )
+from kiro_crew.acp.harness import agentcore as agentcore_mod
 from kiro_crew.acp.harness import kas as kas_mod
 from kiro_crew.acp.harness._common import KIRO_FAMILY_ALIASES
 from kiro_crew.acp.kas_transport import METHOD_KAS_AUTH_GET_ACCESS_TOKEN
 from kiro_crew.acp.types import (
+    ACP_BACKEND_AGENTCORE,
     ACP_BACKEND_CODEX,
     ACP_BACKEND_KAS,
     ACP_BACKEND_KIRO,
@@ -54,7 +56,12 @@ from kiro_crew.acp.types import (
 from kiro_crew.config import paths as paths_mod
 from kiro_crew.mcp_gateway import session_servers as session_servers_mod
 
-ALL_BACKENDS = [ACP_BACKEND_KIRO, ACP_BACKEND_KAS, ACP_BACKEND_CODEX]
+ALL_BACKENDS = [
+    ACP_BACKEND_KIRO,
+    ACP_BACKEND_KAS,
+    ACP_BACKEND_CODEX,
+    ACP_BACKEND_AGENTCORE,
+]
 
 #: The hosts reached through kiro-cli's own binary and ACP relay. They share a
 #: notification vocabulary, an agent-spec permission routing and a spawn-time effort
@@ -315,6 +322,11 @@ async def test_a_missing_binary_aborts_the_spawn(monkeypatch, tmp_path, backend)
     # no harness may return an argv for a binary that is not there -- and narrowing
     # it to one family would leave the next host's spawn unasserted.
     monkeypatch.setattr(client_mod, "_resolve_codex_acp_bin", lambda: (None, "/nowhere"))
+    # The agentcore host resolves runtime COORDINATES rather than a binary -- its argv
+    # is the local stdio shim, which ships with core -- and the invariant is the same
+    # one: no harness returns an argv it cannot actually launch. Emptied through its
+    # own function so this host is not the one the invariant cannot be asserted against.
+    monkeypatch.setattr(agentcore_mod, "_resolve_runtime_coordinates", lambda environ: ("", ""))
     with pytest.raises(AcpRuntimeError, match="not found"):
         await harness_for(backend).resolve_spawn(_ctx(tmp_path))
 

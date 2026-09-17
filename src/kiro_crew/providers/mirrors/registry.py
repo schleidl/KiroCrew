@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from kiro_crew.acp_backends import (
+    ACP_BACKEND_AGENTCORE,
     ACP_BACKEND_CLAUDE,
     ACP_BACKEND_CODEX,
     ACP_BACKEND_KAS,
@@ -188,6 +189,33 @@ MIRRORS: dict[str, type[AgentConfigMirror]] = {
 #: selectable backend to exactly one entry here, so a new harness cannot reach the
 #: dashboard switch without one of these four answers being written down.
 PROJECTIONS: dict[str, McpProjection] = {
+    # NO_CHANNEL, and the reason is a fact about WHERE the session runs rather than a
+    # transport limitation to be measured away. Crew's MCP servers are local stdio
+    # children; the agent is in a container in another account. Even if the array
+    # reached it -- the remote child is kiro-cli, which reads its own agent spec -- the
+    # commands in it name binaries on THIS machine, so what mounted would be the
+    # container's own processes under Crew's names. The remote agent's tools come from
+    # the agent spec baked into the worker image, and that is the honest answer.
+    ACP_BACKEND_AGENTCORE: McpProjection(
+        kind=ProjectionKind.NO_CHANNEL,
+        reason=(
+            "The agent runs in an AgentCore container in the operator's own account, and "
+            "Crew's MCP servers are local stdio children of the gateway. Nothing carries "
+            "them across: a session/new mcpServers array would arrive naming commands "
+            "that exist on the operator's machine and not in the container, so the "
+            "servers that came up would be the container's own processes wearing Crew's "
+            "names. The remote agent's tools are the ones its own agent spec declares, "
+            "materialized inside the image. Declared rather than deferred: a remote "
+            "session legitimately holds none of Crew's tools"
+        ),
+        channel=(
+            "the worker's own agent spec inside the container, plus a way to reach the "
+            "gateway's control plane from there -- i.e. Crew's servers exposed over the "
+            "invoke channel rather than as stdio children, which is a delivery mechanism "
+            "that does not exist and is not the bridge WP3 builds"
+        ),
+        tracking=("docs/system-specs/modules/harness-onboarding.md#the-agentcore-remote-backend"),
+    ),
     ACP_BACKEND_KIRO: McpProjection(
         kind=ProjectionKind.NATIVE,
         reason=(

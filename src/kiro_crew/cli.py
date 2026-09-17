@@ -1634,6 +1634,16 @@ Examples:
         action="store_true",
         help="Fire-and-forget (don't wait for result)",
     )
+    spawn_run.add_argument(
+        "--executor",
+        default="",
+        metavar="NAME",
+        help=(
+            "Where the subagent runs. Default: this machine. 'agentcore' runs it in a "
+            "Bedrock AgentCore microVM in your own AWS account, which needs the "
+            "kirocrew[agentcore] extra and the capabilities.remote_exec scope"
+        ),
+    )
     spawn_sub.add_parser("list", help="List subagents")
     spawn_parser.add_argument("--port", type=int, default=DASHBOARD_PORT, help="Dashboard port")
 

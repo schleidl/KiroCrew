@@ -9730,7 +9730,8 @@
         "artifacts_load_failed": "Не удалось загрузить артефакты этой сессии",
         "library_load_failed": "Не удалось загрузить библиотеку артефактов",
         "artifact_save_failed": "Не удалось сохранить артефакт",
-        "workflow_runs_load_failed": "Не удалось загрузить запуски рабочих процессов"
+        "workflow_runs_load_failed": "Не удалось загрузить запуски рабочих процессов",
+        "executor_label": "Выполняется удалённо на {{executor}}"
       },
       "assistantMessage": {
         "applied_to_tasks": "Применено к задачам",

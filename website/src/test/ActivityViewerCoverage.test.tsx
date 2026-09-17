@@ -788,6 +788,38 @@ describe('ActivityViewer — panel behaviour', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Remote executor badge (agentcore remote agents, WP5)
+// ---------------------------------------------------------------------------
+describe('ActivityViewer — remote executor badge', () => {
+  it('renders the badge for a remote run, with the executor named', () => {
+    renderPanel(
+      <ActivityViewer
+        {...baseProps}
+        view="subagents"
+        subagents={{ s1: mkAgent('s1', { status: 'running', remoteExecutor: 'agentcore' }) }}
+      />,
+    )
+    const badge = screen.getByTestId('subagent-executor')
+    expect(badge.textContent).toContain('agentcore')
+    // Accent, not warn: a remote run is a cost and an isolation boundary, not a
+    // warning, and sharing the downgrade chip's amber would teach the wrong thing.
+    expect(badge.className).toContain('text-accent')
+    expect(badge.className).not.toContain('text-warn')
+  })
+
+  it('renders NO badge for a local run, so an unchanged path stays unchanged', () => {
+    renderPanel(
+      <ActivityViewer
+        {...baseProps}
+        view="subagents"
+        subagents={{ s1: mkAgent('s1', { status: 'running' }) }}
+      />,
+    )
+    expect(screen.queryByTestId('subagent-executor')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Live model-downgrade flag (#5326)
 // ---------------------------------------------------------------------------
 describe('ActivityViewer — live model downgrade flag (#5326)', () => {

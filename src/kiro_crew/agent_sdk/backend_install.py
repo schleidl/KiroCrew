@@ -37,6 +37,7 @@ have, and the remedy is a global npm install.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import threading
 import time
@@ -44,6 +45,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Tuple
 
 from kiro_crew.agent_sdk.backends import (
+    ACP_BACKEND_AGENTCORE,
     ACP_BACKEND_CLAUDE,
     ACP_BACKEND_CODEX,
     ACP_BACKEND_KAS,
@@ -81,6 +83,11 @@ COMPONENT_CLAUDE_CODE_CLI = "claude"
 #: The codex-acp adapter. ONE component, not two: the adapter ships its own
 #: compatible Codex binary, so there is no second executable Crew resolves.
 COMPONENT_CODEX_ACP_ADAPTER = "codex-acp"
+
+#: The optional extra carrying the AgentCore bridge. Not an executable, and named
+#: as the operator would install it: the remote backend's local half has no binary
+#: to resolve -- the shim ships with core -- so what can be absent is the extra.
+COMPONENT_AGENTCORE_EXTRA = "kirocrew[agentcore]"
 
 #: The OpenCode binary. ONE component, and here that is not a simplification: the
 #: harness serves ACP itself, so there is no adapter beside it to be half-installed.
@@ -317,6 +324,35 @@ def _probe_pi() -> BackendInstallState:
     )
 
 
+def _probe_agentcore() -> BackendInstallState:
+    """Is the local half of the remote backend installed?
+
+    Two things have to be present and neither is a binary an operator installs by
+    name: the ``kirocrew[agentcore]`` extra, which is what puts a bridge behind the
+    shim's socket, and the shim module itself. The shim ships with public core, so it
+    is the EXTRA that decides -- probed by importing the bridge's own dependency
+    rather than by reading a version string, because "is boto3 importable in this
+    interpreter" is the question a spawn actually asks.
+
+    Declared rather than left to the ``UNKNOWN`` fallback. ``unknown`` is the honest
+    answer when a RESOLVER failed; here nothing fails -- the answer is simply no on a
+    plain build, and reporting ``unknown`` would read as a switch offered ahead of the
+    code that answers for it.
+    """
+    policy_id = _policy_id(ACP_BACKEND_AGENTCORE)
+    try:
+        importlib.import_module("boto3")
+    except ImportError:
+        return BackendInstallState(
+            ACP_BACKEND_AGENTCORE,
+            policy_id,
+            MISSING,
+            (COMPONENT_AGENTCORE_EXTRA,),
+            "pip install 'kirocrew[agentcore]'",
+        )
+    return BackendInstallState(ACP_BACKEND_AGENTCORE, policy_id, INSTALLED)
+
+
 _PROBES: Dict[str, Callable[[], BackendInstallState]] = {
     ACP_BACKEND_KIRO: _probe_kiro,
     ACP_BACKEND_KAS: _probe_kas,
@@ -324,6 +360,7 @@ _PROBES: Dict[str, Callable[[], BackendInstallState]] = {
     ACP_BACKEND_CODEX: _probe_codex,
     ACP_BACKEND_OPENCODE: _probe_opencode,
     ACP_BACKEND_PI: _probe_pi,
+    ACP_BACKEND_AGENTCORE: _probe_agentcore,
 }
 
 
