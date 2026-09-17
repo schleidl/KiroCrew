@@ -113,15 +113,28 @@ Branch `feat/agentcore-worker`.
   the runtime role read on it only.
 - [x] **Step 6: Tests and gates.** Unit tests green — 132 tests, 132 pass. The
   container smoke test and the in-account build remain, both blocked on a runtime.
-  **Two gaps found while reviewing, still open inside WP1:** the reference stack's
-  strongest guard was `cdk/test/isolation.test.mjs`, which asserts the agent role's
-  permitted actions by **exact-set equality**; the role it pinned no longer exists
-  here, but the technique does and there is no template-shape test yet. And the
-  reference's opt-in Network Firewall egress allow-list is not translated — only the
-  plain VPC hook is, so the domain allow-list is the operator's to build.
-  green against the built image; template linted.
-- [ ] **Step 7: Human gate.** The operator deploys and writes the secret. Neither
-  is agent work.
+  The template-shape gap is **closed**: `test/test_agentcore_infra_template.py`
+  carries the reference `cdk/test/isolation.test.mjs` technique — exact-set equality
+  on the operator role's permitted actions — plus a recursive walk that fails if a
+  *new* ungated reference to the conditional runtime lands. Mutation-checked:
+  removing `Condition: IsRuntimeEnabled` from `WorkerRuntime` turns it red.
+  **One gap remains open inside WP1:** the reference's opt-in Network Firewall
+  egress allow-list is not translated — only the plain VPC hook is, so the domain
+  allow-list is the operator's to build.
+- [ ] **Step 7: Human gate — two passes, not one.** A readiness pass against a
+  fresh account found that a single-pass bring-up **cannot** work: AgentCore
+  validates the ECR pull when the runtime resource is created, so a runtime pointed
+  at a tag that does not exist yet is a failed create that rolls the stack back —
+  not, as the infra README previously claimed, a live runtime reporting a pull error
+  you fix by deploying again. The template now carries a `CreateRuntime` parameter
+  (default `true`, so a steady-state redeploy that omits it never deletes a live
+  runtime); the operator deploys with `false`, writes the four secrets, builds and
+  pushes the image, then deploys with `true`. `SourceLocation` must point at a tree
+  that actually contains `packaging/agentcore-worker`, which an unpushed branch does
+  not — pushed fork, S3 zip of the working tree, or a local arm64 build, per the
+  infra README. `NO_SOURCE` was removed from the allowed source types: this
+  project's buildspec is a path, and CodeBuild demands an inline one with no source.
+  None of the deploy, the secret writes or the image push is agent work.
 
 ## WP2: backend id, harness, shim, keystone, governance
 

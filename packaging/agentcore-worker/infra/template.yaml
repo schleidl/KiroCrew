@@ -49,6 +49,8 @@ Metadata:
         Parameters: [ResourceSuffix, AgentRuntimeName, EcrRepositoryName, LogGroupName]
       - Label: { default: Image }
         Parameters: [ImageTag, ImageTagMutability, KiroCliUrl, KiroCliSha256]
+      - Label: { default: "Bring-up phase (see CreateRuntime)" }
+        Parameters: [CreateRuntime]
       - Label: { default: Build project }
         Parameters: [SourceType, SourceLocation, BuildSpecPath, BuildImage, BuildComputeType]
       - Label: { default: Runtime network }
@@ -108,30 +110,56 @@ Parameters:
     Default: ""
     Description: >-
       URL of the aarch64 musl kiro-cli release archive, passed to the build as a
-      --build-arg. REQUIRED for a build. Deliberately has no default: the vendor's
-      release host name embeds an AWS region, and this repository is public, so the
-      coordinate is supplied at deploy time instead of being committed. Take it
-      from the operator's WP1 spike notes. Note that a "latest/" path is not a pin
-      - KiroCliSha256 is what makes the build reproducible, and a mismatch fails
-      the build rather than shipping an unreviewed binary.
+      --build-arg. REQUIRED for a build. Deliberately has no default, but NOT
+      because the coordinate is sensitive - it is published in the vendor's own
+      install script and its release manifest, and the host name carries no region.
+      It has no default because a URL committed here would pin one version
+      forever, and the pair (url, sha256) has to move together. Resolve both from
+      the manifest at deploy time; the README carries the two commands. A
+      "latest/" path is not a pin - KiroCliSha256 is what makes the build
+      reproducible, and a mismatch fails the build rather than shipping an
+      unreviewed binary.
 
   KiroCliSha256:
     Type: String
     Default: ""
     AllowedPattern: "^([a-fA-F0-9]{64})?$"
     Description: >-
-      SHA-256 of the archive above, from `curl -sSL <url> | shasum -a 256`.
+      SHA-256 of the archive above. Take it from the release manifest's `sha256`
+      field, or recompute it with `curl -sSL <url> | shasum -a 256`.
       REQUIRED for a build: the Dockerfile refuses to build without it.
       NoEcho is not set - a published artifact digest is not a secret.
+
+  CreateRuntime:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      Whether to create the AgentCore runtime in this pass. AgentCore validates
+      the ECR pull AT CREATE TIME, so a runtime pointed at a tag that does not
+      exist yet fails the resource and takes the stack with it - a first bring-up
+      into an empty account therefore CANNOT be one pass. Deploy once with false
+      to land the repository, roles, secrets, bucket and build project; push the
+      image; then deploy again with true. Default true so a steady-state redeploy
+      that omits the flag never deletes a live runtime.
 
   SourceType:
     Type: String
     Default: GITHUB
-    AllowedValues: [GITHUB, CODECOMMIT, S3, NO_SOURCE, GITHUB_ENTERPRISE, BITBUCKET]
+    # NO_SOURCE is deliberately absent: this project's BuildSpec is a PATH inside
+    # the source tree, and CodeBuild requires an INLINE buildspec when there is no
+    # source. A NO_SOURCE project built from this template could never run, so the
+    # combination is rejected at parameter validation instead of at CreateProject.
+    AllowedValues: [GITHUB, CODECOMMIT, S3, GITHUB_ENTERPRISE, BITBUCKET]
   SourceLocation:
     Type: String
     Default: ""
-    Description: Repository or S3 location CodeBuild clones. Empty is only valid with SourceType=NO_SOURCE.
+    Description: >-
+      Repository or S3 location CodeBuild clones, and where BuildSpecPath is
+      resolved. Required - every allowed SourceType needs one. It must point at a
+      tree that actually CONTAINS packaging/agentcore-worker, which for an
+      unpushed branch means either a fork you pushed it to or an S3 zip of the
+      working tree.
   BuildSpecPath:
     Type: String
     Default: packaging/agentcore-worker/infra/buildspec.yml
@@ -224,9 +252,36 @@ Parameters:
       invoke permission is effectively write access to every repository the forge
       app is installed on - grant it deliberately.
 
+# Rules run before any resource is touched, so a coordinate that can only fail
+# later fails here instead - with a sentence the operator can act on rather than a
+# CreateProject or CreateAgentRuntime error a hundred lines into the event log.
+Rules:
+  SourceLocationIsRequired:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref SourceLocation, ""]]
+        AssertDescription: >-
+          SourceLocation is required. Every allowed SourceType clones a tree, and
+          BuildSpecPath is resolved inside it. Point it at a repository or S3 zip
+          that contains packaging/agentcore-worker.
+
+  # Neither is a secret, so naming them in a failure message is safe.
+  ImagePinsAreRequiredTogether:
+    Assertions:
+      - Assert: !Or
+          - !And [!Equals [!Ref KiroCliUrl, ""], !Equals [!Ref KiroCliSha256, ""]]
+          - !And [!Not [!Equals [!Ref KiroCliUrl, ""]], !Not [!Equals [!Ref KiroCliSha256, ""]]]
+        AssertDescription: >-
+          KiroCliUrl and KiroCliSha256 must be supplied together. A URL without a
+          digest builds whatever the host currently serves; a digest without a URL
+          pins nothing. Both empty is allowed only for a stack whose build project
+          will never be run.
+
 Conditions:
   HasSuffix: !Not [!Equals [!Ref ResourceSuffix, ""]]
   IsVpcMode: !Equals [!Ref NetworkMode, "VPC"]
+  # See the CreateRuntime parameter: the runtime is the one resource that cannot
+  # be created before the image it pulls exists.
+  IsRuntimeEnabled: !Equals [!Ref CreateRuntime, "true"]
   HasValidateCommand: !Not [!Equals [!Ref ValidateCommand, ""]]
   HasSourceLocation: !Not [!Equals [!Ref SourceLocation, ""]]
   HasOperatorPrincipal: !Not [!Equals [!Ref OperatorPrincipalArn, ""]]
@@ -469,8 +524,16 @@ Resources:
   # DefaultPolicy resource; here the policy is inline on the role, so
   # `RoleArn: !GetAtt RuntimeRole.Arn` already orders it and an explicit DependsOn
   # would be redundant (cfn-lint W3005).
+  #
+  # That same create-time validation is why this resource is CONDITIONAL. It reads
+  # the ECR tag, so on a first bring-up into an empty account there is nothing to
+  # read and the resource fails - which is a failed CREATE, not a running runtime
+  # reporting a pull error. Phase one deploys with CreateRuntime=false, the image is
+  # pushed, phase two deploys with CreateRuntime=true. DependsOn on the repository
+  # would not help: the repository exists long before an image is in it.
   WorkerRuntime:
     Type: AWS::BedrockAgentCore::Runtime
+    Condition: IsRuntimeEnabled
     Properties:
       AgentRuntimeName: !If
         - HasSuffix
@@ -536,18 +599,27 @@ Resources:
                 - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
             Action: sts:AssumeRole
       Description: Permissions the local client needs to drive the worker runtime
-      Policies:
-        - PolicyName: invoke-worker-runtime
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - bedrock-agentcore:InvokeAgentRuntime
-                  - bedrock-agentcore:StopRuntimeSession
-                Resource:
-                  - !GetAtt WorkerRuntime.AgentRuntimeArn
-                  - !Sub "${WorkerRuntime.AgentRuntimeArn}/*"
+      # The policy names the runtime's exact ARN, so it can only exist in a pass
+      # that creates the runtime. In phase one the role is created empty rather
+      # than granted a wildcard over `runtime/<name>-*` to keep the reference
+      # resolvable - an operator role with no permissions is the honest state
+      # while there is no runtime to invoke, and phase two fills it in. Do NOT
+      # relax this to a prefix wildcard to make one-pass deploys work: the exact
+      # ARN is what stops this role reaching a second runtime in the account.
+      Policies: !If
+        - IsRuntimeEnabled
+        - - PolicyName: invoke-worker-runtime
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - bedrock-agentcore:InvokeAgentRuntime
+                    - bedrock-agentcore:StopRuntimeSession
+                  Resource:
+                    - !GetAtt WorkerRuntime.AgentRuntimeArn
+                    - !Sub "${WorkerRuntime.AgentRuntimeArn}/*"
+        - !Ref "AWS::NoValue"
 
   # ── In-account image build ────────────────────────────────────────────────
   # Building in-account is what removes the need for a local container daemon and
@@ -672,11 +744,18 @@ Outputs:
   Region:
     Description: Region this stack was deployed into
     Value: !Ref AWS::Region
+  # The three runtime outputs are absent in a CreateRuntime=false pass. Their
+  # absence is the signal that the stack is still in phase one: a client
+  # configured from an output set with no AgentRuntimeArn has nothing to invoke,
+  # which is better than an ARN that resolves to nothing.
   AgentRuntimeArn:
+    Condition: IsRuntimeEnabled
     Value: !GetAtt WorkerRuntime.AgentRuntimeArn
   AgentRuntimeId:
+    Condition: IsRuntimeEnabled
     Value: !GetAtt WorkerRuntime.AgentRuntimeId
   RuntimeEndpointName:
+    Condition: IsRuntimeEnabled
     Description: AgentCore provisions this endpoint itself; the client uses this qualifier
     Value: DEFAULT
   RuntimeRoleArn:
