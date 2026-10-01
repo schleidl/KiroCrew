@@ -533,6 +533,7 @@ make this tool possible:
 <a href="https://github.com/dgomesbr" title="Diego Magalhães"><img src="https://github.com/dgomesbr.png?size=64" width="64" height="64" alt="Diego Magalhães" /></a>
 <a href="https://github.com/Dhaivat717" title="Dhaivat Patel"><img src="https://github.com/Dhaivat717.png?size=64" width="64" height="64" alt="Dhaivat Patel" /></a>
 <a href="https://github.com/DHILIP-S-E" title="DHILIP S E"><img src="https://github.com/DHILIP-S-E.png?size=64" width="64" height="64" alt="DHILIP S E" /></a>
+<a href="https://github.com/dillmr" title="dillmr"><img src="https://github.com/dillmr.png?size=64" width="64" height="64" alt="dillmr" /></a>
 <a href="https://github.com/dimwael" title="Wael"><img src="https://github.com/dimwael.png?size=64" width="64" height="64" alt="Wael" /></a>
 <a href="https://github.com/diwm" title="diwm"><img src="https://github.com/diwm.png?size=64" width="64" height="64" alt="diwm" /></a>
 <a href="https://github.com/dixitrathod16" title="Dixit R Jain"><img src="https://github.com/dixitrathod16.png?size=64" width="64" height="64" alt="Dixit R Jain" /></a>
@@ -769,6 +770,7 @@ make this tool possible:
 <a href="https://github.com/mamaiti" title="mamaiti"><img src="https://github.com/mamaiti.png?size=64" width="64" height="64" alt="mamaiti" /></a>
 <a href="https://github.com/mannitrkl2006" title="manish.gupta"><img src="https://github.com/mannitrkl2006.png?size=64" width="64" height="64" alt="manish.gupta" /></a>
 <a href="https://github.com/ManoharSwamynathan" title="Manohar Swamynathan"><img src="https://github.com/ManoharSwamynathan.png?size=64" width="64" height="64" alt="Manohar Swamynathan" /></a>
+<a href="https://github.com/Maqix" title="Marcello Quarta"><img src="https://github.com/Maqix.png?size=64" width="64" height="64" alt="Marcello Quarta" /></a>
 <a href="https://github.com/marcschuricht" title="Marc Schuricht"><img src="https://github.com/marcschuricht.png?size=64" width="64" height="64" alt="Marc Schuricht" /></a>
 <a href="https://github.com/mariamalaidi" title="mariamalaidi"><img src="https://github.com/mariamalaidi.png?size=64" width="64" height="64" alt="mariamalaidi" /></a>
 <a href="https://github.com/martchellop" title="Marcello Pagano"><img src="https://github.com/martchellop.png?size=64" width="64" height="64" alt="Marcello Pagano" /></a>
